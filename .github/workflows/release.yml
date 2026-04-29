@@ -1,0 +1,167 @@
+name: Release
+
+# 触发：推送形如 v1.0.0 / v1.2.3-beta.1 的 tag。
+# 流程：
+#   1. validate：确认 tag 与 package.json 的 version 完全一致，避免发出版本号不匹配的产物
+#   2. quality-gate：复用 CI 的全套校验（typecheck + biome check + test + build:lib），失败则不发版
+#   3. build：跨平台编译 + 打 lib tarball
+#   4. publish：创建 GitHub Release，上传所有二进制和 lib tarball 作为 assets
+on:
+  push:
+    tags:
+      - "v*"
+
+# 同一 tag 重复触发时取消旧 run（罕见但仍要防）
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# release 必需的最小权限集
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate tag matches package version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag and package.json
+        id: extract
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Tag version:     $TAG_VERSION"
+          echo "Package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' (version $TAG_VERSION) does not match package.json version $PKG_VERSION."
+            echo "::error::Please bump package.json to $TAG_VERSION (or re-tag) before releasing."
+            exit 1
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+  quality-gate:
+    name: Quality gate (typecheck + check + test + build:lib)
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Biome check
+        run: bun run check
+
+      - name: Test
+        run: bun test
+
+      - name: Build lib (.js + .d.ts)
+        run: bun run build:lib
+
+  build:
+    name: Build cross-platform binaries
+    runs-on: ubuntu-latest
+    needs: [validate, quality-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build all binaries
+        run: bun run build:all
+
+      - name: Build lib for tarball
+        run: bun run build:lib
+
+      - name: Pack npm tarball
+        # 用 bun pm pack 生成 nova-code-<version>.tgz；放到 dist/ 方便 upload
+        run: |
+          bun pm pack --destination dist
+          ls -lh dist/
+
+      - name: Generate SHA-256 checksums
+        # 给所有发布产物生成校验和，便于用户验证下载完整性
+        working-directory: dist
+        run: |
+          shopt -s nullglob
+          : > checksums.txt
+          for f in nova-code-* nova-code-*.tgz; do
+            [ -f "$f" ] || continue
+            shasum -a 256 "$f" >> checksums.txt
+          done
+          cat checksums.txt
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/nova-code-linux-x64
+            dist/nova-code-linux-arm64
+            dist/nova-code-macos-x64
+            dist/nova-code-macos-arm64
+            dist/nova-code-windows-x64.exe
+            dist/nova-code-*.tgz
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Show what we will publish
+        run: ls -lh release-assets/
+
+      - name: Create GitHub Release
+        # softprops/action-gh-release v2（pinned to major）：稳定运行在 Node 20
+        # generate_release_notes: 自动从 PR/commit 生成 changelog（用户可后续编辑）
+        # draft=false: tag 推上来即发布
+        # prerelease: 自动判断（含 -beta/-rc/-alpha 时为 prerelease）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/nova-code-linux-x64
+            release-assets/nova-code-linux-arm64
+            release-assets/nova-code-macos-x64
+            release-assets/nova-code-macos-arm64
+            release-assets/nova-code-windows-x64.exe
+            release-assets/nova-code-*.tgz
+            release-assets/checksums.txt

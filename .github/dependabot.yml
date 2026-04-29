@@ -1,0 +1,64 @@
+# Dependabot 自动依赖升级配置
+# 文档: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# 覆盖两个生态：
+# 1. npm: package.json 中的依赖（typescript / @biomejs/biome / @types/bun 等）。
+#    Dependabot 自 2024 起原生支持 bun.lock，无需额外配置。
+# 2. github-actions: 各 workflow 中钉的 action 版本（actions/checkout@v4 等）。
+#
+# 节奏：每周一次。每天/每次 push 会被 PR 淹没，weekly 是社区共识。
+# 大版本升级（major）默认忽略：typescript / biome 等的 major 版本通常含破坏性变更，
+# 强制人工评估，避免 dependabot 自动开 PR 后误合并导致 CI 红。
+
+version: 2
+updates:
+  # ───── npm 依赖 ─────
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
+    groups:
+      # 把所有 dev 依赖的 patch + minor 合并成一个 PR，减少 review 噪音
+      dev-dependencies-minor:
+        dependency-type: development
+        update-types:
+          - patch
+          - minor
+    ignore:
+      # major 升级一律忽略，留给人工评估
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ───── GitHub Actions 依赖 ─────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      # 同一 PR 内合并所有 actions 的 minor + patch 升级
+      actions-minor:
+        update-types:
+          - patch
+          - minor
