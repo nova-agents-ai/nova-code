@@ -1,0 +1,79 @@
+{
+  "name": "nova-code",
+  "version": "1.0.0",
+  "description": "一个全新的 Code Agent CLI",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "author": "dinglevin <dinglevin@foxmail.com>",
+  "homepage": "https://github.com/dinglevin/nova-code#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dinglevin/nova-code.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dinglevin/nova-code/issues"
+  },
+  "keywords": [
+    "cli",
+    "code-agent",
+    "ai",
+    "bun",
+    "nova-code"
+  ],
+  "engines": {
+    "bun": ">=1.3.0",
+    "node": ">=18.0.0"
+  },
+  "main": "./dist/lib/index.js",
+  "module": "./dist/lib/index.js",
+  "types": "./dist/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js",
+      "default": "./dist/lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "nova-code": "./bin/nova-code.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "dist/lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "bun --watch run bin/nova-code.ts",
+    "start": "bun run bin/nova-code.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "clean": "rm -rf dist",
+    "prebuild": "bun run clean",
+    "build": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --outfile dist/nova-code",
+    "build:lib": "tsc -p tsconfig.build.json",
+    "prepack": "bun run build:lib",
+    "build:linux-x64": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --target=bun-linux-x64 --outfile dist/nova-code-linux-x64",
+    "build:linux-arm64": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --target=bun-linux-arm64 --outfile dist/nova-code-linux-arm64",
+    "build:macos-x64": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --target=bun-darwin-x64 --outfile dist/nova-code-macos-x64",
+    "build:macos-arm64": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --target=bun-darwin-arm64 --outfile dist/nova-code-macos-arm64",
+    "build:windows-x64": "bun build ./bin/nova-code.ts --compile --minify --sourcemap --target=bun-windows-x64 --outfile dist/nova-code-windows-x64.exe",
+    "build:all": "bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:macos-x64 && bun run build:macos-arm64 && bun run build:windows-x64",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "prepublishOnly": "bun run typecheck && bun run check && bun test && bun run build:lib"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.13",
+    "@types/bun": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
+}

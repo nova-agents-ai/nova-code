@@ -1,0 +1,27 @@
+{
+  // 专门用于构建可发布的 lib 产物。继承根 tsconfig，开启 emit 与 .d.ts 生成。
+  // 跑：bun run build:lib  →  产出 dist/lib/{index,cli,commands}.{js,d.ts}
+  //
+  // 设计取舍：lib 仍然依赖 Bun 类型——commands.ts 的 ask 命令用了 Bun.stdin。
+  // 这意味着 lib 的 ask 命令只能在 Bun 运行时下使用；纯 Node 用户使用 runCli +
+  // 自定义 commands（或 hello/echo 这类不依赖 Bun 的命令）则完全没问题。
+  // 该约束在 README 中已明确说明。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist/lib",
+    "rootDir": "./src",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    // 把 import "./cli.ts" 改写为 import "./cli.js"，让产物在 Node ESM 解析下可加载。
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "node_modules", "dist", "claude-code", "bin"]
+}

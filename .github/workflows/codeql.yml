@@ -1,0 +1,54 @@
+name: CodeQL
+
+# CodeQL 静态安全扫描，覆盖：
+# - 主分支的每次 push（拦截已合并代码中的安全问题）
+# - 针对主分支的 PR（拦截即将合并的安全问题）
+# - 每周一固定时间扫描一次，用于发现「新公布的 CVE 影响到旧代码」这类场景
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 03:17 UTC（错峰，避免整点抢资源）
+    - cron: "17 3 * * 1"
+
+# 多个事件触发同一 ref 时取消旧 run
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # 上传扫描结果到 Security tab 必需
+  security-events: write
+  # 读取代码 + actions 元数据
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # CodeQL v3 起，JavaScript 与 TypeScript 合并到同一个语言标识
+        language: [javascript-typescript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended 比默认 default 多覆盖一些查询规则，TS 项目代价可接受
+          queries: security-extended
+
+      # JS/TS 项目无需 build 步骤——CodeQL 直接分析源码
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
