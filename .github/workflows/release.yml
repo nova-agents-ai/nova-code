@@ -149,7 +149,7 @@ jobs:
         # generate_release_notes: 自动从 PR/commit 生成 changelog（用户可后续编辑）
         # draft=false: tag 推上来即发布
         # prerelease: 自动判断（含 -beta/-rc/-alpha 时为 prerelease）
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
