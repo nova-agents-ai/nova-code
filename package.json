@@ -49,6 +49,7 @@
   "scripts": {
     "dev": "bun --watch run bin/nova-code.ts",
     "start": "bun run bin/nova-code.ts",
+    "mock": "bun run scripts/mock-anthropic.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:watch": "bun test --watch",

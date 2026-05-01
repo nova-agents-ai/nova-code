@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { ConfigError } from "../llm/errors.ts";
 import {
   getConfigFilePath,
+  getLogsDirPath,
   loadConfig,
   loadPersistedConfig,
   resolveConfig,
@@ -32,6 +33,13 @@ describe("config - getConfigFilePath", () => {
   test("以 ~/.nova-code/config.json 为路径", () => {
     const path = getConfigFilePath({ homeDir: "/fake/home" });
     expect(path).toBe("/fake/home/.nova-code/config.json");
+  });
+});
+
+describe("config - getLogsDirPath", () => {
+  test("以 ~/.nova-code/logs 为路径", () => {
+    const path = getLogsDirPath({ homeDir: "/fake/home" });
+    expect(path).toBe("/fake/home/.nova-code/logs");
   });
 });
 

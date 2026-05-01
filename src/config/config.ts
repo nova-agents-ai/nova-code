@@ -34,6 +34,9 @@ const CONFIG_DIR_NAME = ".nova-code";
 /** 配置文件名。 */
 const CONFIG_FILE_NAME = "config.json";
 
+/** 日志文件存放的子目录名（位于 ~/.nova-code 下）。 */
+const LOGS_DIR_NAME = "logs";
+
 /** 环境变量名。统一使用 NOVA_ 前缀。 */
 const ENV_API_KEY = "NOVA_API_KEY";
 const ENV_BASE_URL = "NOVA_BASE_URL";
@@ -75,6 +78,15 @@ export interface ConfigSource {
 export function getConfigFilePath(source: ConfigSource = {}): string {
   const home = source.homeDir ?? homedir();
   return join(home, CONFIG_DIR_NAME, CONFIG_FILE_NAME);
+}
+
+/**
+ * 计算日志目录的绝对路径（~/.nova-code/logs）。
+ * 注意：只返回路径，不创建目录。调用方应在写入前自行 mkdir -p。
+ */
+export function getLogsDirPath(source: ConfigSource = {}): string {
+  const home = source.homeDir ?? homedir();
+  return join(home, CONFIG_DIR_NAME, LOGS_DIR_NAME);
 }
 
 /**
