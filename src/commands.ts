@@ -7,6 +7,11 @@
  * 2. 命令本身可单测——直接调用函数即可，无需 spawn 子进程。
  */
 
+import { loadConfig } from "./config/config.ts";
+import { AbortError, ConfigError, LLMApiError, MaxTurnsExceededError } from "./llm/errors.ts";
+import { runAgentLoop } from "./llm/query.ts";
+import { builtinTools } from "./llm/tools.ts";
+
 export type CommandHandler = (args: readonly string[]) => Promise<number> | number;
 
 export interface CommandDefinition {
@@ -43,19 +48,125 @@ const echoCommand: CommandDefinition = {
 
 const askCommand: CommandDefinition = {
   name: "ask",
-  description: "通过标准输入读取一行问题并原样回显",
-  usage: "nova-code ask",
-  run: async () => {
-    process.stdout.write("Your question: ");
-    const question = await readLineFromStdin();
-    if (question === null) {
-      console.error("\nask: 未读取到输入");
-      return 1;
+  description: "向 LLM 提问，模型可调用本地工具检索代码后给出回答",
+  usage: 'nova-code ask [question]\n  或：echo "问题" | nova-code ask',
+  run: async (args) => {
+    // 优先使用命令行参数；没有则从 stdin 读一行（支持管道输入）
+    const inlineQuestion = args.join(" ").trim();
+    let question: string;
+    if (inlineQuestion !== "") {
+      question = inlineQuestion;
+    } else {
+      const isInteractive = process.stdin.isTTY === true;
+      if (isInteractive) {
+        process.stdout.write("Your question: ");
+      }
+      const fromStdin = await readLineFromStdin();
+      if (fromStdin === null || fromStdin.trim() === "") {
+        console.error("ask: 未提供问题。用法见 `nova-code --help`。");
+        return 1;
+      }
+      question = fromStdin.trim();
     }
-    console.log(`收到问题：${question}`);
-    return 0;
+
+    return await runAskWithLLM(question);
   },
 };
+
+/**
+ * ask 命令的 LLM 部分：
+ * 1. 加载配置（缺 API key 时友好报错并提示如何配置）
+ * 2. 跑 agent loop，把流式文本增量直接写到 stdout
+ * 3. 工具调用以单行提示形式输出到 stderr，避免污染答案本身
+ *
+ * 退出码：0 = 正常结束；1 = 配置错误；2 = LLM/工具失败；130 = 用户中断
+ */
+async function runAskWithLLM(question: string): Promise<number> {
+  // Ctrl+C：转成 abort signal 让 agent loop 优雅退出
+  const abortController = new AbortController();
+  const onSigint = (): void => {
+    abortController.abort();
+  };
+  process.once("SIGINT", onSigint);
+
+  try {
+    const config = await loadConfig();
+    let inAssistantText = false;
+
+    const generator = runAgentLoop({
+      config,
+      userPrompt: question,
+      tools: builtinTools,
+      signal: abortController.signal,
+    });
+
+    for await (const event of generator) {
+      switch (event.type) {
+        case "turn_start":
+          // 第二轮起在工具调用之后，加一个空行让回答与工具输出分隔开
+          if (event.turn > 1) {
+            process.stderr.write("\n");
+          }
+          break;
+        case "text_delta":
+          process.stdout.write(event.delta);
+          inAssistantText = true;
+          break;
+        case "tool_call":
+          if (inAssistantText) {
+            process.stdout.write("\n");
+            inAssistantText = false;
+          }
+          process.stderr.write(`\n[tool] ${event.toolName} ${JSON.stringify(event.input)}\n`);
+          break;
+        case "tool_result":
+          if (event.isError) {
+            process.stderr.write(`[tool] ${event.toolName} failed: ${event.content}\n`);
+          }
+          break;
+        case "done":
+          // 末尾补一个换行，避免 shell 提示符紧贴输出
+          process.stdout.write("\n");
+          break;
+        // turn_end 当前不需要展示给用户
+        case "turn_end":
+          break;
+      }
+    }
+    return 0;
+  } catch (error) {
+    return handleAskError(error);
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
+/** 把不同错误映射到合适的退出码 + 用户友好的提示。 */
+function handleAskError(error: unknown): number {
+  if (error instanceof ConfigError) {
+    console.error(`\nask: ${error.message}`);
+    return 1;
+  }
+  if (error instanceof AbortError) {
+    console.error("\nask: 已中断。");
+    return 130;
+  }
+  if (error instanceof MaxTurnsExceededError) {
+    console.error(`\nask: ${error.message}`);
+    return 2;
+  }
+  if (error instanceof LLMApiError) {
+    const status = error.status === undefined ? "" : ` (HTTP ${error.status})`;
+    console.error(`\nask: LLM 请求失败${status}：${error.message}`);
+    return 2;
+  }
+  if (error instanceof Error) {
+    console.error(`\nask: ${error.message}`);
+    return 2;
+  }
+  console.error(`\nask: ${String(error)}`);
+  return 2;
+}
 
 export const builtinCommands: readonly CommandDefinition[] = [
   helloCommand,
