@@ -1,0 +1,153 @@
+/**
+ * LLM 子系统的核心领域类型。
+ *
+ * 设计取舍：
+ * - 不直接暴露 @anthropic-ai/sdk 的 Message/MessageParam 类型给上层，
+ *   而是定义 nova-code 自己的薄类型（NovaMessage / NovaContentBlock）。
+ *   原因：SDK 的 ContentBlockParam 是 25+ 项的巨型联合类型（含 PDF / image /
+ *   web search / code execution 等大量 nova-code 暂不支持的形态）。暴露原始
+ *   类型会让消费方被迫处理大量永远收不到的分支。
+ * - SDK 类型仅在 client.ts / query.ts 内部使用，并通过 toSdkMessages() 转换。
+ * - 类型用 readonly 标记不可变属性，匹配 messages 数组追加而非原地变更的语义。
+ */
+
+/** 一段文本内容块。 */
+export interface TextBlock {
+  readonly type: "text";
+  readonly text: string;
+}
+
+/** 模型请求调用某个工具。由 assistant message 产生。 */
+export interface ToolUseBlock {
+  readonly type: "tool_use";
+  /** SDK 分配的唯一 id，必须原样回传到对应的 tool_result。 */
+  readonly id: string;
+  /** 被调用的工具名（必须匹配某个已注册 Tool.name）。 */
+  readonly name: string;
+  /** 工具入参（已由 SDK 解析为对象）。 */
+  readonly input: Readonly<Record<string, unknown>>;
+}
+
+/** 工具执行结果。由 user message 包装，发回模型。 */
+export interface ToolResultBlock {
+  readonly type: "tool_result";
+  readonly tool_use_id: string;
+  readonly content: string;
+  readonly is_error?: boolean;
+}
+
+/** nova-code 当前支持的全部内容块类型。 */
+export type NovaContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+
+/** 角色枚举。assistant 由模型产生，user 由调用方或 tool_result 产生。 */
+export enum MessageRoleEnum {
+  USER = "user",
+  ASSISTANT = "assistant",
+}
+
+/**
+ * 一条对话消息。可以是纯文本（content 为字符串）或结构化内容块数组。
+ * 与 Anthropic SDK 的 MessageParam 形状对齐，便于 toSdkMessages 直接透传。
+ */
+export interface NovaMessage {
+  readonly role: MessageRoleEnum;
+  readonly content: string | readonly NovaContentBlock[];
+}
+
+/**
+ * 工具的 JSON Schema 入参定义。
+ *
+ * 直接对齐 Anthropic API 的 tool.input_schema 字段（必须是 JSON Schema 的
+ * object 类型）。我们不做更深的类型约束——上层用 satisfies / as const
+ * 就能拿到字面量类型推断。
+ */
+export interface ToolInputSchema {
+  readonly type: "object";
+  readonly properties: Readonly<Record<string, unknown>>;
+  readonly required?: readonly string[];
+}
+
+/**
+ * Tool 抽象。一个工具 = 名字 + 描述 + 入参 schema + 一个执行函数。
+ *
+ * execute 必须返回字符串（会作为 tool_result.content 发回模型）。
+ * - 工具内部可以抛任何错误；agent loop 会捕获并把 message 当 tool_result.is_error 反馈
+ * - 工具可以是 async（IO 操作）或 sync（纯计算）
+ */
+export interface Tool {
+  readonly name: string;
+  readonly description: string;
+  readonly input_schema: ToolInputSchema;
+  readonly execute: (
+    input: Readonly<Record<string, unknown>>,
+    context: ToolExecutionContext,
+  ) => string | Promise<string>;
+}
+
+/**
+ * 传给 Tool.execute 的运行时上下文。
+ * 当前只塞了 abort signal，后续可扩展（cwd、logger、权限校验等）。
+ */
+export interface ToolExecutionContext {
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Agent loop 对外发射的事件流。
+ * 调用方按需订阅——比如 ask 命令只关心 text_delta 用于 stdout 流式打印。
+ *
+ * 与 SDK 的 RawMessageStreamEvent 不同：这里是 nova-code 自己的高层语义事件，
+ * 隐藏了 content_block_start/stop 等底层细节。
+ */
+export type AgentEvent =
+  /** 一轮 LLM 调用即将开始（turn 从 1 开始计数）。 */
+  | { readonly type: "turn_start"; readonly turn: number }
+  /** 模型流式产出的文本增量。 */
+  | { readonly type: "text_delta"; readonly delta: string }
+  /** 一轮 LLM 调用结束，附带完整 assistant message 和停止原因。 */
+  | {
+      readonly type: "turn_end";
+      readonly turn: number;
+      readonly message: NovaMessage;
+      readonly stopReason: AgentStopReasonEnum;
+    }
+  /** 即将执行某个工具调用（一次 turn_end 后可能有 0 个或多个）。 */
+  | {
+      readonly type: "tool_call";
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly input: Readonly<Record<string, unknown>>;
+    }
+  /** 工具执行完成，包含返回值或错误信息。 */
+  | {
+      readonly type: "tool_result";
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly content: string;
+      readonly isError: boolean;
+    }
+  /** 整个 agent loop 结束。 */
+  | {
+      readonly type: "done";
+      readonly turns: number;
+      readonly finalMessage: NovaMessage;
+    };
+
+/**
+ * Agent loop 的终止原因。
+ * 与 SDK 的 StopReason 字段对齐，但只暴露 nova-code 关心的子集。
+ */
+export enum AgentStopReasonEnum {
+  /** 模型给出最终答案，正常结束。 */
+  END_TURN = "end_turn",
+  /** 模型要求调用工具（loop 会继续）。 */
+  TOOL_USE = "tool_use",
+  /** 输出 token 超限。 */
+  MAX_TOKENS = "max_tokens",
+  /** 模型自行选择 stop_sequence 终止。 */
+  STOP_SEQUENCE = "stop_sequence",
+  /** 模型拒绝回答。 */
+  REFUSAL = "refusal",
+  /** 罕见：模型主动暂停（如长任务）。 */
+  PAUSE_TURN = "pause_turn",
+}

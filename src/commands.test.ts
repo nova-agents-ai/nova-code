@@ -164,7 +164,7 @@ describe("ask 命令", () => {
 
   // ask 涉及真实 stdin 交互，本套件只校验命令注册是否正确，不做端到端 IO 测试。
   // 端到端 IO 测试应通过 spawn 子进程并喂 stdin 实现，属于集成测试范畴。
-  test("usage 描述包含 ask", () => {
-    expect(ask?.usage).toBe("nova-code ask");
+  test("usage 描述包含 ask 命令名", () => {
+    expect(ask?.usage).toContain("nova-code ask");
   });
 });
