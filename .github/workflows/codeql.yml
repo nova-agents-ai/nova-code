@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # security-extended 比默认 default 多覆盖一些查询规则，TS 项目代价可接受
@@ -49,6 +49,6 @@ jobs:
       # JS/TS 项目无需 build 步骤——CodeQL 直接分析源码
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
