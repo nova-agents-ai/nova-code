@@ -24,6 +24,8 @@ jobs:
   validate:
     name: Validate tag matches package version
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
@@ -47,6 +49,8 @@ jobs:
   quality-gate:
     name: Quality gate (typecheck + check + test + build:lib)
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     needs: validate
     steps:
       - name: Checkout
@@ -75,6 +79,8 @@ jobs:
   build:
     name: Build cross-platform binaries
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     needs: [validate, quality-gate]
     steps:
       - name: Checkout
@@ -130,6 +136,8 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     needs: [validate, build]
     steps:
       - name: Checkout
@@ -145,7 +153,7 @@ jobs:
         run: ls -lh release-assets/
 
       - name: Create GitHub Release
-        # softprops/action-gh-release v2（pinned to major）：稳定运行在 Node 20
+        # softprops/action-gh-release v3：支持 Node.js 24
         # generate_release_notes: 自动从 PR/commit 生成 changelog（用户可后续编辑）
         # draft=false: tag 推上来即发布
         # prerelease: 自动判断（含 -beta/-rc/-alpha 时为 prerelease）
