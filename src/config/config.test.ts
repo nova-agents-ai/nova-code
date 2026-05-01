@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError } from "../llm/errors.ts";
@@ -32,14 +32,16 @@ async function makeTempHome(): Promise<{
 describe("config - getConfigFilePath", () => {
   test("以 ~/.nova-code/config.json 为路径", () => {
     const path = getConfigFilePath({ homeDir: "/fake/home" });
-    expect(path).toBe("/fake/home/.nova-code/config.json");
+    // 使用正则匹配，兼容 Windows (\) 和 POSIX (/) 路径分隔符
+    expect(path).toMatch(/[\\/]fake[\\/]home[\\/]\.nova-code[\\/]config\.json$/);
   });
 });
 
 describe("config - getLogsDirPath", () => {
   test("以 ~/.nova-code/logs 为路径", () => {
     const path = getLogsDirPath({ homeDir: "/fake/home" });
-    expect(path).toBe("/fake/home/.nova-code/logs");
+    // 使用正则匹配，兼容 Windows (\) 和 POSIX (/) 路径分隔符
+    expect(path).toMatch(/[\\/]fake[\\/]home[\\/]\.nova-code[\\/]logs$/);
   });
 });
 
@@ -76,9 +78,9 @@ describe("config - loadPersistedConfig", () => {
     const { homeDir, cleanup } = await makeTempHome();
     try {
       const path = getConfigFilePath({ homeDir });
-      // 手动写入一个损坏的 JSON
-      await writeFile(path.replace("config.json", ""), "", { flag: "a" }).catch(() => {});
-      await Bun.write(path, "{ not valid json");
+      // 先创建 .nova-code 目录，再写入损坏的 JSON
+      await mkdir(join(homeDir, ".nova-code"), { recursive: true });
+      await writeFile(path, "{ not valid json", "utf8");
       await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(ConfigError);
     } finally {
       await cleanup();
