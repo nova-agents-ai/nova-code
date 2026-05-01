@@ -1,0 +1,47 @@
+{
+  // 配合 launch.json 使用的后台任务。
+  //
+  // "Start Mock Anthropic Server" 是个 background task：
+  //   - 启动后保持运行，不会阻塞 launch
+  //   - launch.json 里 1 号配置 (ask: mock + --debug-pretty) 把它列为 preLaunchTask
+  //   - 通过 problemMatcher.background.beginsPattern / endsPattern 让 vscode 知道
+  //     "看到 'listening on' 这行就视为已启动"，否则 vscode 会一直等 task 退出
+  //   - isBackground=true + presentation.panel=dedicated 让 mock 输出独立面板，
+  //     不与调试 console 混淆
+  //
+  // 端口冲突：mock 默认占 8787。如果你已经在终端里手动起了 mock，这个 task 会失败；
+  // 此时把 launch.json 1 号配置的 preLaunchTask 字段删掉即可。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Mock Anthropic Server",
+      "type": "shell",
+      "command": "${env:HOME}/.bun/bin/bun",
+      "args": ["run", "scripts/mock-anthropic.ts"],
+      "isBackground": true,
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "focus": false,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "problemMatcher": {
+        "owner": "mock-anthropic",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[mock-anthropic\\] listening",
+          "endsPattern": "^\\[mock-anthropic\\] try:"
+        }
+      }
+    }
+  ]
+}

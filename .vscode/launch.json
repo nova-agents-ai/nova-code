@@ -1,0 +1,84 @@
+{
+  // VSCode 调试 nova-code 的 ask 子命令。
+  //
+  // 关键原理：
+  //   bun 调试器用的是 WebKit Inspector Protocol（不是 V8 CDP），与 vscode 内置
+  //   "node" debugger 不完全兼容，断点定位经常失败。所以这里用 "type": "bun"
+  //   交给 oven.bun-vscode 插件接管，断点稳定命中。
+  //
+  // 前置条件：
+  //   必须已安装 vscode 扩展 oven.bun-vscode（已确认安装）。
+  //   如未安装：code --install-extension oven.bun-vscode
+  //
+  // 使用方法：
+  //   1. 在 .ts 源码里打断点（如 src/llm/query.ts 的 runAgentLoop 入口）
+  //   2. F5 选下面任一配置
+  //   3. "ask: mock + --debug-pretty" 会自动起 mock，无需真实 API key
+  //
+  // 配置间的差异：
+  //   - 1 号：离线 + mock，**最常用**
+  //   - 2 号：连真实 Anthropic API（需要 .env 里有 NOVA_API_KEY）
+  //   - 3 号：直接调试当前打开的 .ts 文件（适合调 mock 或单跑某段脚本）
+  //   - 4 号：调试 bun test，自动跑当前打开的测试文件
+  "version": "0.2.0",
+  "inputs": [
+    {
+      "id": "askPrompt",
+      "type": "promptString",
+      "description": "传给 ask 子命令的问题",
+      "default": "list ts files in src/"
+    }
+  ],
+  "configurations": [
+    {
+      "name": "ask: mock + --debug-pretty (推荐)",
+      "type": "bun",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/bin/nova-code.ts",
+      "args": ["ask", "--debug-pretty", "${input:askPrompt}"],
+      "env": {
+        "NOVA_API_KEY": "mock-not-validated",
+        "NOVA_BASE_URL": "http://localhost:8787/?scenario=tool"
+      },
+      "stopOnEntry": false,
+      "watchMode": false,
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "Start Mock Anthropic Server"
+    },
+    {
+      "name": "ask: 真实 API + --debug-pretty",
+      "type": "bun",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/bin/nova-code.ts",
+      "args": ["ask", "--debug-pretty", "${input:askPrompt}"],
+      "envFile": "${workspaceFolder}/.env",
+      "stopOnEntry": false,
+      "watchMode": false,
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "调试当前 .ts 文件 (bun)",
+      "type": "bun",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${file}",
+      "stopOnEntry": false,
+      "watchMode": false,
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "bun test: 当前文件",
+      "type": "bun",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtime": "bun",
+      "runtimeArgs": ["test"],
+      "program": "${file}",
+      "stopOnEntry": false,
+      "watchMode": false,
+      "internalConsoleOptions": "neverOpen"
+    }
+  ]
+}

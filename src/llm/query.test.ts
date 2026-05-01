@@ -169,8 +169,13 @@ function makeEchoTool(): Tool {
       properties: { message: { type: "string" } },
       required: ["message"],
     },
-    // input 类型是 Record<string, unknown>，bracket 访问以兼容 noUncheckedIndexedAccess
-    execute: (input) => `echo: ${String(input["message"] ?? "")}`,
+    // input 类型是 Readonly<Record<string, unknown>>（index signature）；
+    // TS noPropertyAccessFromIndexSignature 要求 bracket，biome useLiteralKeys 偏好点号 ——
+    // 通过先收窄到具名属性类型来同时满足两者
+    execute: (input) => {
+      const { message } = input as { message?: unknown };
+      return `echo: ${String(message ?? "")}`;
+    },
   };
 }
 

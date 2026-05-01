@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
-import { builtinCommands, findCommand } from "./commands.ts";
+import { buildDebugLogFileName, builtinCommands, findCommand } from "./commands.ts";
 
 interface OutputCapture {
   log: Mock<(...args: unknown[]) => void>;
@@ -166,5 +166,34 @@ describe("ask 命令", () => {
   // 端到端 IO 测试应通过 spawn 子进程并喂 stdin 实现，属于集成测试范畴。
   test("usage 描述包含 ask 命令名", () => {
     expect(ask?.usage).toContain("nova-code ask");
+  });
+
+  test("usage 中说明了 --debug flag", () => {
+    expect(ask?.usage).toContain("--debug");
+  });
+
+  test("usage 中提示日志文件落在 ~/.nova-code/logs/", () => {
+    expect(ask?.usage).toContain("~/.nova-code/logs/");
+  });
+});
+
+describe("buildDebugLogFileName", () => {
+  test("按 ask-YYYY-MM-DDTHH-mm-ss-<pid>.log 格式生成", () => {
+    // 月份 0-indexed：4 → 5 月
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const name = buildDebugLogFileName(fixedDate, 42649);
+    expect(name).toBe("ask-2026-05-01T15-11-23-42649.log");
+  });
+
+  test("个位数月/日/时/分/秒补零", () => {
+    const fixedDate = new Date(2026, 0, 2, 3, 4, 5);
+    const name = buildDebugLogFileName(fixedDate, 1);
+    expect(name).toBe("ask-2026-01-02T03-04-05-1.log");
+  });
+
+  test("文件名按字典序与时序一致（便于 ls -lt 排序）", () => {
+    const earlier = buildDebugLogFileName(new Date(2026, 4, 1, 10, 0, 0), 1);
+    const later = buildDebugLogFileName(new Date(2026, 4, 1, 10, 0, 1), 1);
+    expect(earlier < later).toBe(true);
   });
 });
