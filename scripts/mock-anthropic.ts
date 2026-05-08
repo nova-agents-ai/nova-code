@@ -18,7 +18,7 @@
  *   - 收到 POST /v1/messages 时返回 SSE 流，覆盖 anthropic SDK 的事件契约
  *   - 通过 query 参数 scenario 选择剧本：
  *       ?scenario=simple  （默认）单轮 end_turn，模型只回一句话
- *       ?scenario=tool    第一次返回 tool_use（list_dir），收到 tool_result 后
+ *       ?scenario=tool    第一次返回 tool_use（LS），收到 tool_result 后
  *                         第二次返回 end_turn 文本
  *   - 通过对话历史中是否已出现 user/tool_result 自动判断"是不是第二轮请求"，
  *     无需调用方显式切换 scenario
@@ -52,6 +52,13 @@ interface MessagesRequestBody {
 enum ScenarioEnum {
   SIMPLE = "simple",
   TOOL = "tool",
+  /**
+   * M1.5 e2e 读写闭环：Grep → FileEdit → Bash → end_turn。
+   *
+   * 用于验证写权工具在真实文件系统上的完整链路。剧本走的工作目录由环境变量
+   * `MOCK_EDIT_WORKDIR` 指定（未设置时 fallback 到 "." 的临时路径）。
+   */
+  EDIT_LOOP = "edit-loop",
 }
 
 const DEFAULT_PORT = 8787;
@@ -125,7 +132,20 @@ async function handleRequest(request: Request): Promise<Response> {
 /** 把 ?scenario=xxx 收窄到合法枚举，缺省/非法都落到 SIMPLE。 */
 function parseScenario(raw: string | null): ScenarioEnum {
   if (raw === ScenarioEnum.TOOL) return ScenarioEnum.TOOL;
+  if (raw === ScenarioEnum.EDIT_LOOP) return ScenarioEnum.EDIT_LOOP;
   return ScenarioEnum.SIMPLE;
+}
+
+/** 计数 messages 里 tool_result 块总数，用来判定 edit-loop 剧本到第几轮。 */
+function countToolResults(messages: MessagesRequestBody["messages"]): number {
+  let count = 0;
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (isObject(block) && block["type"] === "tool_result") count += 1;
+    }
+  }
+  return count;
 }
 
 /**
@@ -134,7 +154,7 @@ function parseScenario(raw: string | null): ScenarioEnum {
  * SIMPLE：永远返回一句固定文本，stop_reason=end_turn。
  *
  * TOOL：通过对话历史里是否已经包含 tool_result 来判定第几轮。
- *   - 第一轮：返回一段引言文本 + 一个 tool_use(list_dir)，stop_reason=tool_use
+ *   - 第一轮：返回一段引言文本 + 一个 tool_use(LS)，stop_reason=tool_use
  *   - 第二轮（已经看到 tool_result）：返回最终回答，stop_reason=end_turn
  */
 function buildScenarioEvents(
@@ -145,16 +165,66 @@ function buildScenarioEvents(
     return composeTextOnlyTurn("hello from mock-anthropic");
   }
 
+  if (scenario === ScenarioEnum.EDIT_LOOP) {
+    return buildEditLoopTurn(body);
+  }
+
   const alreadyHasToolResult = body.messages.some((message) => containsToolResult(message.content));
   if (!alreadyHasToolResult) {
     return composeToolUseTurn({
       leadingText: "Let me list the directory first.",
       toolUseId: "toolu_mock_01",
-      toolName: "list_dir",
+      toolName: "LS",
       input: { path: "." },
     });
   }
   return composeTextOnlyTurn("Found 2 files: a.ts, b.ts");
+}
+
+/**
+ * edit-loop 剧本：按历史里 tool_result 的数量判定当前第几轮。
+ *
+ *   0 个 tool_result → Turn 1：Grep
+ *   1 个                 → Turn 2：FileEdit
+ *   2 个                 → Turn 3：Bash
+ *   ≥3                   → Turn 4：text + end_turn
+ *
+ * 工作目录从环境变量 MOCK_EDIT_WORKDIR 读；测试启 mock server 时顺手设定。
+ */
+function buildEditLoopTurn(body: MessagesRequestBody): readonly SseEvent[] {
+  const workDir = process.env["MOCK_EDIT_WORKDIR"] ?? ".";
+  const targetFile = `${workDir}/a.ts`;
+  const resultCount = countToolResults(body.messages);
+
+  if (resultCount === 0) {
+    return composeToolUseTurn({
+      leadingText: "Searching for oldFn...",
+      toolUseId: "toolu_edit_01",
+      toolName: "Grep",
+      input: { pattern: "oldFn", path: workDir },
+    });
+  }
+  if (resultCount === 1) {
+    return composeToolUseTurn({
+      leadingText: "Renaming oldFn to newFn in a.ts...",
+      toolUseId: "toolu_edit_02",
+      toolName: "FileEdit",
+      input: {
+        path: targetFile,
+        old_string: "oldFn",
+        new_string: "newFn",
+      },
+    });
+  }
+  if (resultCount === 2) {
+    return composeToolUseTurn({
+      leadingText: "Verifying with echo...",
+      toolUseId: "toolu_edit_03",
+      toolName: "Bash",
+      input: { command: "echo done", cwd: workDir },
+    });
+  }
+  return composeTextOnlyTurn("Done. Renamed oldFn to newFn in a.ts.");
 }
 
 /** 判断某条 message.content 中是否包含 tool_result 块。 */

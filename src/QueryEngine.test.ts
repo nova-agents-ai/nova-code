@@ -1,5 +1,5 @@
 /**
- * Agent loop 单元测试。
+ * Agent loop 单元测试（M1.5 起从 src/llm/query.test.ts 搬到此处）。
  *
  * 关键技术：构造一个 Fake Anthropic Client，让 messages.stream() 按脚本
  * 返回预设的事件序列。这样可以完全脱离网络验证：
@@ -17,10 +17,11 @@ import type {
   RawMessageStreamEvent,
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
-import type { ResolvedConfig } from "../config/config.ts";
-import { AbortError, MaxTurnsExceededError } from "./errors.ts";
-import { runAgentLoop } from "./query.ts";
-import { type AgentEvent, AgentStopReasonEnum, type Tool } from "./types.ts";
+import type { ResolvedConfig } from "./config/config.ts";
+import { AbortError, MaxTurnsExceededError } from "./errors/index.ts";
+import { runAgentLoop } from "./QueryEngine.ts";
+import type { Tool } from "./Tool.ts";
+import { type AgentEvent, AgentStopReasonEnum } from "./types/message.ts";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fake SDK Client

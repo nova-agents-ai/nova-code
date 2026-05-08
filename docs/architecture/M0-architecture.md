@@ -2,6 +2,14 @@
 
 > 适用版本：nova-code v1.0.x  
 > 范围：`src/config/`、`src/llm/`、`src/commands.ts` 中的 `ask` 命令
+>
+> **❗ M1.5 后目录结构已重组**：`src/llm/` 命名空间已完全删除。本文的模块全景与具体文件路径是 M0 时期的快照，仅供回溯阅读。最新的模块位置与移动说明请看 [`docs/design/M1.5-refactor.md`](../design/M1.5-refactor.md)；简单对应关系：
+> - `src/llm/types.ts` → `src/types/message.ts`
+> - `src/llm/errors.ts::LLMApiError` → `src/services/api/errors.ts`
+> - `src/llm/errors.ts::{ConfigError,ToolExecutionError,AbortError,MaxTurnsExceededError}` → `src/errors/`
+> - `src/llm/client.ts` → `src/services/api/client.ts`
+> - `src/llm/query.ts` → `src/QueryEngine.ts`
+> - `src/commands.ts` 拆 → `src/commands/{Hello,Echo,Ask}Command/`（`src/commands.ts` 瘦身为注册表）
 
 ---
 

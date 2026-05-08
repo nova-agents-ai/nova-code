@@ -114,3 +114,5 @@ dist
 
 # 其他
 claude-code/
+.DS_Store
+.idea/

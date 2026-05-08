@@ -1,18 +1,19 @@
 /**
  * Anthropic SDK 实例的薄封装。
  *
- * 与 claude-code 的 src/services/api/client.ts 相比，这里只保留最本质的部分：
+ * M1.5 起从 src/llm/client.ts 搬到 src/services/api/client.ts，结构对齐
+ * claude-code/src/services/api/client.ts；与之相比这里只保留最本质的部分：
  * - 仅支持 Anthropic 官方 API（不支持 Bedrock / Vertex / Foundry）
  * - 不做 OAuth 自动刷新（用户自己管理 API key）
  * - 不注入 session id / x-app / 自定义 headers（避免泄漏标识符给上游）
  *
  * 为什么要单独抽这个文件？
  * - 集中管理 SDK 构造逻辑，方便后续加 timeout / proxy / 自定义 fetch
- * - query.ts 测试时通过依赖注入替换 client（见 runAgentLoop 的 client 参数）
+ * - QueryEngine 测试时通过依赖注入替换 client（见 runAgentLoop 的 client 参数）
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { ResolvedConfig } from "../config/config.ts";
+import type { ResolvedConfig } from "../../config/config.ts";
 
 /**
  * 默认 SDK 内部重试次数。Anthropic SDK 自带指数退避，2 次重试足以覆盖

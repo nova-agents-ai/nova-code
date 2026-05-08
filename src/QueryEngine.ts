@@ -1,10 +1,15 @@
 /**
  * Agent Loop —— nova-code 的 LLM 对话主循环。
  *
+ * M1.5 起从 src/llm/query.ts 搬到顶层 src/QueryEngine.ts，结构对齐
+ * claude-code/src/QueryEngine.ts（文件名对齐；入口函数仍是 runAgentLoop，
+ * 不重命名 —— claude-code 的 query() 函数签名是 M12+ 的形状，纳什当前无法对齐）。
+ *
  * 移植自 claude-code/src/query.ts 的 queryLoop()，剥离了所有非本质特性：
  * - 不做 compact / microcompact / context collapse（context 增长由 maxTurns 兜底）
  * - 不做 thinking / extended thinking 配置
- * - 不做 fallback model / 多层 retry（SDK 自带的 maxRetries 够用）
+ * - 不做 fallback model / 多层 retry（SDK 自带的 maxRetries 够用；
+ *   M1.5 新增 services/api/withRetry.ts 薄层在 QueryEngine 之外按需包装）
  * - 不做权限审批（工具默认全部允许）
  * - 不做 hooks / analytics
  *
@@ -29,9 +34,11 @@ import type {
   MessageParam as SdkMessageParam,
   Tool as SdkTool,
 } from "@anthropic-ai/sdk/resources/messages";
-import type { ResolvedConfig } from "../config/config.ts";
-import { createAnthropicClient } from "./client.ts";
-import { AbortError, LLMApiError, MaxTurnsExceededError, ToolExecutionError } from "./errors.ts";
+import type { ResolvedConfig } from "./config/config.ts";
+import { AbortError, MaxTurnsExceededError, ToolExecutionError } from "./errors/index.ts";
+import { createAnthropicClient } from "./services/api/client.ts";
+import { LLMApiError } from "./services/api/errors.ts";
+import type { Tool } from "./Tool.ts";
 import { findTool } from "./tools.ts";
 import {
   type AgentEvent,
@@ -39,10 +46,9 @@ import {
   MessageRoleEnum,
   type NovaContentBlock,
   type NovaMessage,
-  type Tool,
   type ToolResultBlock,
   type ToolUseBlock,
-} from "./types.ts";
+} from "./types/message.ts";
 
 /**
  * runAgentLoop 的入参。
