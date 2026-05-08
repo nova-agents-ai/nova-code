@@ -20,26 +20,32 @@ export {
   savePersistedConfig,
 } from "./config/config.ts";
 
-// LLM 子系统：Agent loop + 工具系统 + 错误类型
+// 错误体系（M1.5 起搬到 src/errors/ 与 src/services/api/errors.ts）
 export {
   AbortError,
   ConfigError,
-  LLMApiError,
   MaxTurnsExceededError,
   ToolExecutionError,
-} from "./llm/errors.ts";
-export type { AgentLoopParams } from "./llm/query.ts";
-export { runAgentLoop } from "./llm/query.ts";
-export { builtinTools, findTool, listDirTool, readFileTool } from "./llm/tools.ts";
+} from "./errors/index.ts";
+export { LLMApiError } from "./services/api/errors.ts";
+
+// Agent loop（M1.5 起搬到 src/QueryEngine.ts）
+export type { AgentLoopParams } from "./QueryEngine.ts";
+export { runAgentLoop } from "./QueryEngine.ts";
+
+// 工具系统：注册表 + 内置工具（M1 步骤 1 起搬到顶层 src/tools.ts）
+export { builtinTools, FileReadTool, findTool, LSTool } from "./tools.ts";
+
+// Tool 接口（M1 步骤 1 起搬到顶层 src/Tool.ts）
+export type { Tool, ToolExecutionContext, ToolInputSchema } from "./Tool.ts";
+
+// 消息 / 事件类型（M1.5 起搬到 src/types/message.ts）
 export type {
   AgentEvent,
   NovaContentBlock,
   NovaMessage,
   TextBlock,
-  Tool,
-  ToolExecutionContext,
-  ToolInputSchema,
   ToolResultBlock,
   ToolUseBlock,
-} from "./llm/types.ts";
-export { AgentStopReasonEnum, MessageRoleEnum } from "./llm/types.ts";
+} from "./types/message.ts";
+export { AgentStopReasonEnum, MessageRoleEnum } from "./types/message.ts";

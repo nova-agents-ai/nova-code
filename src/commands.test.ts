@@ -196,4 +196,26 @@ describe("buildDebugLogFileName", () => {
     const later = buildDebugLogFileName(new Date(2026, 4, 1, 10, 0, 1), 1);
     expect(earlier < later).toBe(true);
   });
+
+  test("传入 sessionId 时文件名后缀使用 sessionId 替代 pid", () => {
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const name = buildDebugLogFileName(fixedDate, 42649, "sess-abc123");
+    expect(name).toBe("ask-2026-05-01T15-11-23-sess-abc123.log");
+  });
+
+  test("空字符串 sessionId 也会被采用（调用方负责自行校验）", () => {
+    // 约定：调用方传了值就是调用方的意图；undefined 才回落 pid。
+    // 空字符串形成不合理的文件名，但是入参的责任由调用方满足。
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const name = buildDebugLogFileName(fixedDate, 42649, "");
+    expect(name).toBe("ask-2026-05-01T15-11-23-.log");
+  });
+
+  test("不传 sessionId 时保持 pid 后缀（向后兼容）", () => {
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const withoutSession = buildDebugLogFileName(fixedDate, 42649);
+    const withUndefined = buildDebugLogFileName(fixedDate, 42649, undefined);
+    expect(withoutSession).toBe("ask-2026-05-01T15-11-23-42649.log");
+    expect(withUndefined).toBe(withoutSession);
+  });
 });

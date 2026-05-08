@@ -17,7 +17,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { ConfigError } from "../llm/errors.ts";
+import { ConfigError } from "../errors/index.ts";
 
 /** 默认使用的模型。Anthropic 当前主推 claude-sonnet-4-5，可被配置覆盖。 */
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";

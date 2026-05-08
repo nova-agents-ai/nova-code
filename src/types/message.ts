@@ -1,5 +1,8 @@
 /**
- * LLM 子系统的核心领域类型。
+ * LLM 对话消息 / 事件的核心领域类型。
+ *
+ * M1.5 起从 src/llm/types.ts 搬到此处：顶层 src/types/ 与 claude-code
+ * 的 src/types/ 一致，作为跨模块共享的领域类型聚合点。
  *
  * 设计取舍：
  * - 不直接暴露 @anthropic-ai/sdk 的 Message/MessageParam 类型给上层，
@@ -7,7 +10,8 @@
  *   原因：SDK 的 ContentBlockParam 是 25+ 项的巨型联合类型（含 PDF / image /
  *   web search / code execution 等大量 nova-code 暂不支持的形态）。暴露原始
  *   类型会让消费方被迫处理大量永远收不到的分支。
- * - SDK 类型仅在 client.ts / query.ts 内部使用，并通过 toSdkMessages() 转换。
+ * - SDK 类型仅在 services/api/client.ts / QueryEngine.ts 内部使用，
+ *   并通过 toSdkMessages() 转换。
  * - 类型用 readonly 标记不可变属性，匹配 messages 数组追加而非原地变更的语义。
  */
 
@@ -52,44 +56,6 @@ export enum MessageRoleEnum {
 export interface NovaMessage {
   readonly role: MessageRoleEnum;
   readonly content: string | readonly NovaContentBlock[];
-}
-
-/**
- * 工具的 JSON Schema 入参定义。
- *
- * 直接对齐 Anthropic API 的 tool.input_schema 字段（必须是 JSON Schema 的
- * object 类型）。我们不做更深的类型约束——上层用 satisfies / as const
- * 就能拿到字面量类型推断。
- */
-export interface ToolInputSchema {
-  readonly type: "object";
-  readonly properties: Readonly<Record<string, unknown>>;
-  readonly required?: readonly string[];
-}
-
-/**
- * Tool 抽象。一个工具 = 名字 + 描述 + 入参 schema + 一个执行函数。
- *
- * execute 必须返回字符串（会作为 tool_result.content 发回模型）。
- * - 工具内部可以抛任何错误；agent loop 会捕获并把 message 当 tool_result.is_error 反馈
- * - 工具可以是 async（IO 操作）或 sync（纯计算）
- */
-export interface Tool {
-  readonly name: string;
-  readonly description: string;
-  readonly input_schema: ToolInputSchema;
-  readonly execute: (
-    input: Readonly<Record<string, unknown>>,
-    context: ToolExecutionContext,
-  ) => string | Promise<string>;
-}
-
-/**
- * 传给 Tool.execute 的运行时上下文。
- * 当前只塞了 abort signal，后续可扩展（cwd、logger、权限校验等）。
- */
-export interface ToolExecutionContext {
-  readonly signal: AbortSignal;
 }
 
 /**

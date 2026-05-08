@@ -34,7 +34,7 @@ tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，e
 - Bun 自动加载 `.env`，**禁止**引入 `dotenv`。
 - 优先用 Bun 原生 API，禁止引入对应的 npm 包：
   - `Bun.file` / `Bun.write` 替代 `node:fs` 的 readFile/writeFile
-  - <code>Bun.$&#96;ls&#96;</code> 替代 `execa` / `child_process`
+  - `<code>`Bun.$&#96;ls&#96;`</code>` 替代 `execa` / `child_process`
   - `Bun.serve()` 替代 `express` / `koa`
   - `bun:sqlite` 替代 `better-sqlite3`
   - `Bun.redis` 替代 `ioredis`
@@ -100,4 +100,3 @@ describe("runCli", () => {
 - **禁止**引入 React / Vue / Tailwind / Vite。
 - **禁止**新增 `.html` / `.tsx` / `.css` 文件。
 - 如确需 Web UI，请先与维护者讨论，再独立放到 `web/` 子目录，避免污染 CLI 主项目。
-
