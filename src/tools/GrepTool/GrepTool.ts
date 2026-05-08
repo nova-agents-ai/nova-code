@@ -358,7 +358,7 @@ async function runNodeGrep(args: GrepArgs): Promise<GrepResult> {
     if (matches.length >= GREP_MAX_MATCHES) return;
     if (args.signal.aborted) return;
 
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
@@ -369,14 +369,15 @@ async function runNodeGrep(args: GrepArgs): Promise<GrepResult> {
       if (matches.length >= GREP_MAX_MATCHES) return;
       if (args.signal.aborted) return;
 
-      const absPath = `${dir}${sep}${entry.name}`;
+      const entryName = String(entry.name);
+      const absPath = `${dir}${sep}${entryName}`;
       const relPath = toRelativePosix(absPath, args.searchRoot);
       if (isIgnoredPath(relPath)) continue;
 
       if (entry.isDirectory()) {
         await walk(absPath);
       } else if (entry.isFile()) {
-        if (includeMatcher && !includeMatcher(relPath, entry.name)) continue;
+        if (includeMatcher && !includeMatcher(relPath, entryName)) continue;
         await scanFile(absPath, relPath);
         totalScanned += 1;
       }

@@ -414,31 +414,6 @@ function countNewlinesBefore(content: string, offset: number): number {
   return count;
 }
 
-/** 第 lineIdx 行（0-indexed）的起始字符 offset。 */
-function lineStartChar(content: string, lineIdx: number): number {
-  if (lineIdx === 0) return 0;
-  let seen = 0;
-  for (let i = 0; i < content.length; i += 1) {
-    if (content[i] === "\n") {
-      seen += 1;
-      if (seen === lineIdx) return i + 1;
-    }
-  }
-  return content.length;
-}
-
-/** 第 lineIdx 行（0-indexed）的结束字符 offset（不含末尾 \n）。 */
-function lineEndChar(content: string, lineIdx: number): number {
-  let seen = 0;
-  for (let i = 0; i < content.length; i += 1) {
-    if (content[i] === "\n") {
-      if (seen === lineIdx) return i;
-      seen += 1;
-    }
-  }
-  return content.length;
-}
-
 /** 把 hunk 列表格式化为 diff 段落（unified diff 风格：context 用空格前缀，删除 -，新增 +）。 */
 function formatDiffSection(
   hunks: readonly DiffHunk[],

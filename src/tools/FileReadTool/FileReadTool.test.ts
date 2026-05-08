@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ToolExecutionError } from "../../errors/index.ts";
 import { FileReadTool } from "./FileReadTool.ts";
 
 const NOOP_SIGNAL = new AbortController().signal;
