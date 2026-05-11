@@ -514,16 +514,17 @@ describe("integration · tool error propagation", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// m1-5-e2e-writeflow：真子进程 + 内嵌 mock server 的写权完整链路验证
+// m1-5-e2e-writeflow：真子进程 + 本地 mock LLM 的写权完整链路验证
 //
 // 与上面走 fake client 的测试不同：这组用真的 Bun.spawn bin/nova-code.ts ask，
-// 用内嵌 Bun.serve mock 的 /v1/messages 接口提供 SSE 响应，覆盖：
-// 配置加载 → HTTP 交互 → Agent Loop → 7 个内置工具之一链的完整端到端流。
+// 但通过 NOVA_TRANSPORT=mock 把 LLM 端切换成进程内假实现，覆盖：
+// 配置加载 → Agent Loop → 7 个内置工具之一链的完整端到端流。
 // ───────────────────────────────────────────────────────────────────────────
 
+const BIN_PATH = new URL("../bin/nova-code.ts", import.meta.url).pathname;
+
 describe("m1-5-e2e-writeflow", () => {
-  test("real child process + mock server: Grep → FileEdit → Bash → end_turn renames oldFn to newFn", async () => {
-    // 1) fixture：3 个含 oldFn 的 .ts 文件，a.ts 会被 FileEdit 改写
+  test("real child process + mock LLM: Grep → FileEdit → Bash → end_turn renames oldFn to newFn", async () => {
     const aPath = join(workDir, "a.ts");
     const bPath = join(workDir, "b.ts");
     const cPath = join(workDir, "c.ts");
@@ -531,272 +532,36 @@ describe("m1-5-e2e-writeflow", () => {
     await Bun.write(bPath, "// TODO: also rename oldFn here one day\n");
     await Bun.write(cPath, "// oldFn appears in comment too\n");
 
-    // 2) 内嵌 mock server（端口 0 自动选可用端口，避免与其他测试冲突）
-    const server = Bun.serve({
-      port: 0,
-      fetch: (request) => handleEditLoopRequest(request, workDir),
+    const proc = Bun.spawn({
+      cmd: ["bun", "run", BIN_PATH, "ask", "rename oldFn to newFn"],
+      env: {
+        ...process.env,
+        NOVA_API_KEY: "sk-mock-anything",
+        NOVA_TRANSPORT: "mock",
+        NOVA_MOCK_SCENARIO: "edit-loop",
+        MOCK_EDIT_WORKDIR: workDir,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
-    try {
-      const baseURL = `http://localhost:${server.port}`;
+    const timeoutHandle = setTimeout(() => proc.kill(), 10_000);
+    const exitCode = await proc.exited;
+    clearTimeout(timeoutHandle);
 
-      // 3) spawn 真子进程：bun run bin/nova-code.ts ask "..."
-      //    stdin 必须给个 "ignore"，否则 readLineFromStdin 会阻塞（由于传了行内
-      //    question，实际并不会执行 stdin 读取，但保险起见关闭 stdin）
-      const proc = Bun.spawn({
-        cmd: ["bun", "run", BIN_PATH, "ask", "rename oldFn to newFn"],
-        env: {
-          ...process.env,
-          NOVA_API_KEY: "sk-mock-anything",
-          NOVA_BASE_URL: `${baseURL}/?scenario=edit-loop`,
-          MOCK_EDIT_WORKDIR: workDir,
-        },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
 
-      // 10s 挂起防护：setTimeout 与进程赛跑
-      const timeoutHandle = setTimeout(() => proc.kill(), 10_000);
-      const exitCode = await proc.exited;
-      clearTimeout(timeoutHandle);
+    expect(exitCode, `non-zero exit.\nstdout=${stdout}\nstderr=${stderr}`).toBe(0);
+    expect(stdout).toContain("Done");
 
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
+    const aFinal = await readFile(aPath, "utf8");
+    expect(aFinal).toBe("export function newFn() { return 1; }\n");
 
-      // 4) 断言：退出码 0
-      expect(exitCode, `non-zero exit.\nstdout=${stdout}\nstderr=${stderr}`).toBe(0);
-
-      // stdout 含 "Done"
-      expect(stdout).toContain("Done");
-
-      // 5) fixture 文件终态
-      const aFinal = await readFile(aPath, "utf8");
-      expect(aFinal).toBe("export function newFn() { return 1; }\n");
-
-      // b.ts / c.ts 未被改动（剧本只改 a.ts）
-      const bFinal = await readFile(bPath, "utf8");
-      const cFinal = await readFile(cPath, "utf8");
-      expect(bFinal).toContain("oldFn");
-      expect(cFinal).toContain("oldFn");
-    } finally {
-      server.stop(true);
-    }
-  }, 15_000); // 整个用例的测试框架超时：15s 足够走完 4 轮 mock 交互 + fs IO
+    const bFinal = await readFile(bPath, "utf8");
+    const cFinal = await readFile(cPath, "utf8");
+    expect(bFinal).toContain("oldFn");
+    expect(cFinal).toContain("oldFn");
+  }, 15_000);
 });
-
-// 完全内嵌的 edit-loop mock：
-// 与 scripts/mock-anthropic.ts 共用一套 SSE 事件单元格式，但不跨进程起动整个
-// script（避免端口争用与起停开销）。剧本格式与 scripts 版保持一致。
-const BIN_PATH = new URL("../bin/nova-code.ts", import.meta.url).pathname;
-
-interface MockSseEvent {
-  readonly event: string;
-  readonly data: Readonly<Record<string, unknown>>;
-}
-
-interface MockRequestBody {
-  readonly messages: readonly Readonly<{ readonly content: unknown }>[];
-}
-
-async function handleEditLoopRequest(request: Request, workDir: string): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response("mock only handles POST", { status: 404 });
-  }
-  const body = (await request.json()) as MockRequestBody;
-  const resultCount = countMockToolResults(body.messages);
-  const events = buildEditLoopEvents(resultCount, workDir);
-  const sseText = serializeMockSse(events);
-  return new Response(sseText, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
-  });
-}
-
-function countMockToolResults(messages: MockRequestBody["messages"]): number {
-  let count = 0;
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) continue;
-    for (const block of message.content) {
-      if (
-        block !== null &&
-        typeof block === "object" &&
-        (block as { type?: unknown }).type === "tool_result"
-      ) {
-        count += 1;
-      }
-    }
-  }
-  return count;
-}
-
-function buildEditLoopEvents(resultCount: number, workDir: string): readonly MockSseEvent[] {
-  if (resultCount === 0) {
-    return toolUseEvents({
-      leadingText: "Searching for oldFn...",
-      toolUseId: "toolu_edit_01",
-      toolName: "Grep",
-      input: { pattern: "oldFn", path: workDir },
-    });
-  }
-  if (resultCount === 1) {
-    return toolUseEvents({
-      leadingText: "Renaming oldFn to newFn in a.ts...",
-      toolUseId: "toolu_edit_02",
-      toolName: "FileEdit",
-      input: {
-        path: join(workDir, "a.ts"),
-        old_string: "oldFn",
-        new_string: "newFn",
-      },
-    });
-  }
-  if (resultCount === 2) {
-    return toolUseEvents({
-      leadingText: "Verifying with echo...",
-      toolUseId: "toolu_edit_03",
-      toolName: "Bash",
-      input: { command: "echo done", cwd: workDir },
-    });
-  }
-  return textOnlyEvents("Done. Renamed oldFn to newFn in a.ts.");
-}
-
-interface ToolUseEventsArgs {
-  readonly leadingText: string;
-  readonly toolUseId: string;
-  readonly toolName: string;
-  readonly input: Readonly<Record<string, unknown>>;
-}
-
-function toolUseEvents(args: ToolUseEventsArgs): readonly MockSseEvent[] {
-  const inputJson = JSON.stringify(args.input);
-  const usage = { input_tokens: 1, output_tokens: 1 };
-  return [
-    {
-      event: "message_start",
-      data: {
-        type: "message_start",
-        message: {
-          id: "msg_mock",
-          type: "message",
-          role: "assistant",
-          content: [],
-          model: "claude-mock",
-          stop_reason: null,
-          stop_sequence: null,
-          usage,
-        },
-      },
-    },
-    {
-      event: "content_block_start",
-      data: {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      },
-    },
-    {
-      event: "content_block_delta",
-      data: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text: args.leadingText },
-      },
-    },
-    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-    {
-      event: "content_block_start",
-      data: {
-        type: "content_block_start",
-        index: 1,
-        content_block: {
-          type: "tool_use",
-          id: args.toolUseId,
-          name: args.toolName,
-          input: {},
-        },
-      },
-    },
-    {
-      event: "content_block_delta",
-      data: {
-        type: "content_block_delta",
-        index: 1,
-        delta: { type: "input_json_delta", partial_json: inputJson },
-      },
-    },
-    { event: "content_block_stop", data: { type: "content_block_stop", index: 1 } },
-    {
-      event: "message_delta",
-      data: {
-        type: "message_delta",
-        delta: { stop_reason: "tool_use", stop_sequence: null },
-        usage,
-      },
-    },
-    { event: "message_stop", data: { type: "message_stop" } },
-  ];
-}
-
-function textOnlyEvents(text: string): readonly MockSseEvent[] {
-  const usage = { input_tokens: 1, output_tokens: 1 };
-  return [
-    {
-      event: "message_start",
-      data: {
-        type: "message_start",
-        message: {
-          id: "msg_mock",
-          type: "message",
-          role: "assistant",
-          content: [],
-          model: "claude-mock",
-          stop_reason: null,
-          stop_sequence: null,
-          usage,
-        },
-      },
-    },
-    {
-      event: "content_block_start",
-      data: {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      },
-    },
-    {
-      event: "content_block_delta",
-      data: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text },
-      },
-    },
-    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-    {
-      event: "message_delta",
-      data: {
-        type: "message_delta",
-        delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage,
-      },
-    },
-    { event: "message_stop", data: { type: "message_stop" } },
-  ];
-}
-
-function serializeMockSse(events: readonly MockSseEvent[]): string {
-  let buffer = "";
-  for (const event of events) {
-    buffer += `event: ${event.event}\n`;
-    buffer += `data: ${JSON.stringify(event.data)}\n\n`;
-  }
-  return buffer;
-}

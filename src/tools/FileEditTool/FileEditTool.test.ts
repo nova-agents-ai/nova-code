@@ -37,7 +37,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
 import { EDIT_MAX_FILE_BYTES } from "../utils.ts";
@@ -541,18 +541,27 @@ describe("FileEditTool · abort", () => {
 // ============================================================
 describe("FileEditTool · 路径脱敏", () => {
   let homeTempDir: string | null = null;
+  let previousHome: string | undefined;
 
   beforeAll(async () => {
-    homeTempDir = await mkdtemp(join(homedir(), ".nova-code-fileedittool-test-"));
+    previousHome = process.env["HOME"];
+    homeTempDir = await mkdtemp(join(tmpdir(), "nova-code-fileedittool-home-"));
+    process.env["HOME"] = homeTempDir;
   });
 
   afterAll(async () => {
     if (homeTempDir) await rm(homeTempDir, { recursive: true, force: true });
+    if (previousHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = previousHome;
+    }
   });
 
   test("文件不存在的错误消息把 $HOME 替换为 ~", async () => {
-    if (!homeTempDir) throw new Error("homeTempDir not set up");
-    const missing = join(homeTempDir, "missing.txt");
+    if (homeTempDir === null) throw new Error("homeTempDir not set up");
+    const tempHome = homeTempDir;
+    const missing = join(tempHome, "missing.txt");
 
     let caught: unknown;
     try {
@@ -565,20 +574,21 @@ describe("FileEditTool · 路径脱敏", () => {
     }
     expect(caught).toBeInstanceOf(ToolExecutionError);
     const message = (caught as ToolExecutionError).message;
-    expect(message).not.toContain(homedir());
-    expect(message).toMatch(/~\/\.nova-code-fileedittool-test-/);
+    expect(message).not.toContain(tempHome);
+    expect(message).toContain("~/missing.txt");
   });
 
   test("正常输出（Edited <path>）也走脱敏", async () => {
-    if (!homeTempDir) throw new Error("homeTempDir not set up");
-    const filePath = join(homeTempDir, "edit-me.txt");
+    if (homeTempDir === null) throw new Error("homeTempDir not set up");
+    const tempHome = homeTempDir;
+    const filePath = join(tempHome, "edit-me.txt");
     await writeFile(filePath, "old");
 
     const result = await FileEditTool.execute(
       { path: filePath, old_string: "old", new_string: "new" },
       { signal: NOOP_SIGNAL },
     );
-    expect(result).not.toContain(homedir());
-    expect(result).toMatch(/Edited ~\/\.nova-code-fileedittool-test-/);
+    expect(result).not.toContain(tempHome);
+    expect(result).toContain("Edited ~/edit-me.txt");
   });
 });

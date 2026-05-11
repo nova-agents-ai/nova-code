@@ -1,5 +1,5 @@
 /**
- * m2-e2e-chat ——  chat 多轮 REPL 的子进程 + 内嵌 mock server 端到端测试。
+ * m2-e2e-chat ——  chat 多轮 REPL 的子进程 + 本地 mock LLM 端到端测试。
  *
  * 覆盖设计稿 §10.2 的核心 DoD：
  * 1. 3 轮对话上下文不丢：第 3 轮请求里 messages 数组包含前 2 轮的 user/assistant
@@ -9,7 +9,7 @@
  *
  * 设计取舍：
  * - Mock 走一个简单"每轮回固定文本、end_turn"的剧本——context 是否完整
- *   靠 messages.length 断言，不需要让 mock 理解 tool_use
+ *   靠 mock 日志里的 messages.length 断言，不需要真实网络
  * - HOME 指向临时目录，确保 /save 写盘落在可清理的 sandbox 里，不污染真实 ~/.nova-code
  * - env 只保留最必要的几个变量，避免用户本机的 NOVA_ / ANTHROPIC_ 串进来
  */
@@ -19,120 +19,12 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** `Bun.serve` 返回的 Server 实例类型（带正确泛型参数）。 */
-type MockServer = ReturnType<typeof Bun.serve>;
-
 const BIN_PATH = new URL("../bin/nova-code.ts", import.meta.url).pathname;
-
-/** Mock server 记录每次请求的 messages.length，供断言上下文是否完整透传。 */
-interface MockRequestLog {
-  readonly messageCount: number;
-  readonly lastUserText: string | undefined;
-}
-
-/**
- * 启动一个极简 mock server：无论收到什么 messages，都回一段固定文本 end_turn。
- * 请求数量 / messages 数量均由 log 暴露给断言侧。
- */
-function startMockServer(log: MockRequestLog[]): MockServer {
-  return Bun.serve({
-    port: 0,
-    async fetch(request) {
-      if (request.method !== "POST") {
-        return new Response("mock only handles POST", { status: 404 });
-      }
-      const body = (await request.json()) as {
-        messages: readonly { role: string; content: unknown }[];
-      };
-      log.push({
-        messageCount: body.messages.length,
-        lastUserText: extractLastUserText(body.messages),
-      });
-      return new Response(buildEndTurnSse("ok"), {
-        status: 200,
-        headers: {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        },
-      });
-    },
-  });
-}
-
-/** 从请求 body 的 messages 里抽出最后一条 user 消息的文本；用于人工校验剧本。 */
-function extractLastUserText(
-  messages: readonly { role: string; content: unknown }[],
-): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const m = messages[i];
-    if (m === undefined || m.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
-    // 跳过 tool_result 形态的 user（数组 content）——测试剧本不会走到这
-    return undefined;
-  }
-  return undefined;
-}
-
-/** 构造一个"纯文本 + end_turn"的 Anthropic SSE 流。 */
-function buildEndTurnSse(text: string): string {
-  const usage = { input_tokens: 1, output_tokens: 1 };
-  const events: { event: string; data: Record<string, unknown> }[] = [
-    {
-      event: "message_start",
-      data: {
-        type: "message_start",
-        message: {
-          id: "msg_mock",
-          type: "message",
-          role: "assistant",
-          content: [],
-          model: "claude-mock",
-          stop_reason: null,
-          stop_sequence: null,
-          usage,
-        },
-      },
-    },
-    {
-      event: "content_block_start",
-      data: {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      },
-    },
-    {
-      event: "content_block_delta",
-      data: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text },
-      },
-    },
-    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-    {
-      event: "message_delta",
-      data: {
-        type: "message_delta",
-        delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage,
-      },
-    },
-    { event: "message_stop", data: { type: "message_stop" } },
-  ];
-  let buffer = "";
-  for (const e of events) {
-    buffer += `event: ${e.event}\n`;
-    buffer += `data: ${JSON.stringify(e.data)}\n\n`;
-  }
-  return buffer;
-}
 
 /** spawn chat 子进程并喂 stdin 全部行；等待退出后返回 stdout/stderr。 */
 async function runChatChild(params: {
   readonly home: string;
-  readonly baseURL: string;
+  readonly mockLogFile: string;
   readonly args: readonly string[];
   readonly stdinLines: readonly string[];
   readonly timeoutMs?: number;
@@ -143,7 +35,9 @@ async function runChatChild(params: {
       PATH: process.env["PATH"] ?? "",
       HOME: params.home,
       NOVA_API_KEY: "sk-mock",
-      NOVA_BASE_URL: params.baseURL,
+      NOVA_TRANSPORT: "mock",
+      NOVA_MOCK_SCENARIO: "chat",
+      NOVA_MOCK_LOG_FILE: params.mockLogFile,
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -170,17 +64,14 @@ async function runChatChild(params: {
 // ────────────────────────────────────────────────────────────────────────────
 
 let home: string;
-let server: MockServer;
-let log: MockRequestLog[];
+let mockLogFile: string;
 
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "nova-m2e2e-"));
-  log = [];
-  server = startMockServer(log);
+  mockLogFile = join(home, "mock-requests.jsonl");
 });
 
 afterEach(async () => {
-  server.stop(true);
   if (home) await rm(home, { recursive: true, force: true });
 });
 
@@ -190,11 +81,9 @@ afterEach(async () => {
 
 describe("m2-e2e-chat", () => {
   test("3 轮对话 + /save alias + /exit → 历史完整透传，sessions/ 下有两份文件", async () => {
-    const baseURL = `http://localhost:${server.port}`;
-
     const result = await runChatChild({
       home,
-      baseURL,
+      mockLogFile,
       args: [],
       stdinLines: ["hello1", "hello2", "hello3", "/save alias-a", "/exit"],
     });
@@ -204,20 +93,14 @@ describe("m2-e2e-chat", () => {
       `chat exited non-zero.\nstdout=${result.stdout}\nstderr=${result.stderr}`,
     ).toBe(0);
 
-    // ── 3 轮对话全部打到 mock server ─────────────────────────────
-    expect(log.length).toBe(3);
-    // 第 N 轮请求的 messages.length = 2*(N-1) + 1
-    //  - 第 1 轮：[user1]                        → 1
-    //  - 第 2 轮：[user1, assistant1, user2]     → 3
-    //  - 第 3 轮：[..., assistant2, user3]       → 5
-    expect(log[0]?.messageCount).toBe(1);
-    expect(log[1]?.messageCount).toBe(3);
-    expect(log[2]?.messageCount).toBe(5);
-
-    // 最后一条 user 文本确认剧本没错乱
-    expect(log[0]?.lastUserText).toBe("hello1");
-    expect(log[1]?.lastUserText).toBe("hello2");
-    expect(log[2]?.lastUserText).toBe("hello3");
+    const logEntries = await readMockLogEntries(mockLogFile);
+    expect(logEntries.length).toBe(3);
+    expect(logEntries[0]?.messageCount).toBe(1);
+    expect(logEntries[1]?.messageCount).toBe(3);
+    expect(logEntries[2]?.messageCount).toBe(5);
+    expect(logEntries[0]?.lastUserText).toBe("hello1");
+    expect(logEntries[1]?.lastUserText).toBe("hello2");
+    expect(logEntries[2]?.lastUserText).toBe("hello3");
 
     // ── /save 落盘：<sessionId>.jsonl + alias-a.jsonl ────────────
     const sessionsDir = join(home, ".nova-code", "sessions");
@@ -240,12 +123,10 @@ describe("m2-e2e-chat", () => {
   }, 15_000); // 整个子进程 + SSE 往返，给够宽松超时
 
   test("--resume alias-a 后新一轮 → 请求 messages 包含恢复出的 6 条历史 + 新 user", async () => {
-    const baseURL = `http://localhost:${server.port}`;
-
     // 第一次会话：3 轮 + save
     const first = await runChatChild({
       home,
-      baseURL,
+      mockLogFile,
       args: [],
       stdinLines: ["h1", "h2", "h3", "/save alias-b", "/exit"],
     });
@@ -253,15 +134,15 @@ describe("m2-e2e-chat", () => {
       first.exitCode,
       `first chat exited non-zero.\nstdout=${first.stdout}\nstderr=${first.stderr}`,
     ).toBe(0);
-    expect(log.length).toBe(3);
+    expect(await readMockLogEntries(mockLogFile)).toHaveLength(3);
 
-    // 清空 log，开始测 resume
-    log.length = 0;
+    // 清空 mock 日志，开始测 resume
+    await clearMockLogFile(mockLogFile);
 
     // 第二次会话：--resume alias-b，喂 1 轮 + /exit
     const second = await runChatChild({
       home,
-      baseURL,
+      mockLogFile,
       args: ["--resume", "alias-b"],
       stdinLines: ["follow-up", "/exit"],
     });
@@ -270,16 +151,13 @@ describe("m2-e2e-chat", () => {
       `resume chat exited non-zero.\nstdout=${second.stdout}\nstderr=${second.stderr}`,
     ).toBe(0);
 
-    // 只打一次 mock（"follow-up" 这轮）
-    expect(log.length).toBe(1);
-    // 历史 6 条 + 新 user 1 条 = 7 条
-    expect(log[0]?.messageCount).toBe(7);
-    expect(log[0]?.lastUserText).toBe("follow-up");
+    const resumeLog = await readMockLogEntries(mockLogFile);
+    expect(resumeLog.length).toBe(1);
+    expect(resumeLog[0]?.messageCount).toBe(7);
+    expect(resumeLog[0]?.lastUserText).toBe("follow-up");
   }, 15_000);
 
   test("idle 下双按 Ctrl+C → 退出码 130", async () => {
-    const baseURL = `http://localhost:${server.port}`;
-
     // 注：不经 stdin 投投 “/exit”，才能停在 idle 等待输入的状态。
     // 非 TTY pipe 模式下 readline 不接管 SIGINT，SIGINT 由 process.on("SIGINT") 活
     // 用谁收——正好验证 SIGINT 状态机至少在 process 路径上不回归。TTY 路径
@@ -290,7 +168,9 @@ describe("m2-e2e-chat", () => {
         PATH: process.env["PATH"] ?? "",
         HOME: home,
         NOVA_API_KEY: "sk-mock",
-        NOVA_BASE_URL: baseURL,
+        NOVA_TRANSPORT: "mock",
+        NOVA_MOCK_SCENARIO: "chat",
+        NOVA_MOCK_LOG_FILE: mockLogFile,
       },
       stdin: "pipe",
       stdout: "pipe",
@@ -330,3 +210,27 @@ describe("m2-e2e-chat", () => {
     }
   }, 15_000);
 });
+
+interface MockLogEntry {
+  readonly messageCount: number;
+  readonly lastUserText: string | undefined;
+}
+
+async function readMockLogEntries(path: string): Promise<readonly MockLogEntry[]> {
+  let raw = "";
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return [];
+  }
+
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as MockLogEntry);
+}
+
+async function clearMockLogFile(path: string): Promise<void> {
+  await rm(path, { force: true });
+}
