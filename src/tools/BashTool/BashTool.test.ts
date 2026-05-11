@@ -18,6 +18,7 @@ import { AbortError, ToolExecutionError } from "../../errors/index.ts";
 import { BashTool } from "./BashTool.ts";
 
 const NOOP_SIGNAL = new AbortController().signal;
+const bashDescribe = process.platform === "win32" ? describe.skip : describe;
 
 async function makeTempDir(): Promise<{
   dir: string;
@@ -30,7 +31,7 @@ async function makeTempDir(): Promise<{
   };
 }
 
-describe("BashTool · 基础", () => {
+bashDescribe("BashTool · 基础", () => {
   test("name 字段为 'Bash'（PascalCase 对齐 claude-code）", () => {
     expect(BashTool.name).toBe("Bash");
   });
@@ -61,7 +62,7 @@ describe("BashTool · 基础", () => {
   });
 });
 
-describe("BashTool · 入参校验", () => {
+bashDescribe("BashTool · 入参校验", () => {
   test("command 缺失 → ToolExecutionError", async () => {
     await expect(BashTool.execute({}, { signal: NOOP_SIGNAL })).rejects.toThrow(ToolExecutionError);
   });
@@ -88,7 +89,7 @@ describe("BashTool · 入参校验", () => {
   });
 });
 
-describe("BashTool · cwd 校验", () => {
+bashDescribe("BashTool · cwd 校验", () => {
   test("未传 cwd → 使用 process.cwd()", async () => {
     const result = await BashTool.execute({ command: "pwd" }, { signal: NOOP_SIGNAL });
     expect(result).toContain(process.cwd());
@@ -140,7 +141,7 @@ describe("BashTool · cwd 校验", () => {
   });
 });
 
-describe("BashTool · 安全过滤", () => {
+bashDescribe("BashTool · 安全过滤", () => {
   test("硬黑名单 'rm -rf /' 拒绝", async () => {
     await expect(
       BashTool.execute({ command: "rm -rf /" }, { signal: NOOP_SIGNAL }),
@@ -183,7 +184,7 @@ describe("BashTool · 安全过滤", () => {
   });
 });
 
-describe("BashTool · 输出格式可解析性约束（v2.2 评审 · 架构 Issue #3）", () => {
+bashDescribe("BashTool · 输出格式可解析性约束（v2.2 评审 · 架构 Issue #3）", () => {
   test("约束 1：尾行 [exit code: 0] [duration: Xms] 严格匹配", async () => {
     const result = await BashTool.execute({ command: "true" }, { signal: NOOP_SIGNAL });
     expect(result).toMatch(/^\[exit code: 0\] \[duration: \d+ms\]$/m);
@@ -238,7 +239,7 @@ describe("BashTool · 输出格式可解析性约束（v2.2 评审 · 架构 Iss
   });
 });
 
-describe("BashTool · zombie detach grace（v2.2 评审 · 测试 Issue #2）", () => {
+bashDescribe("BashTool · zombie detach grace（v2.2 评审 · 测试 Issue #2）", () => {
   test("子进程 trap 忽略 TERM/KILL → 1700ms 内 detach 返回，warning 行可解析", async () => {
     const startedAt = Date.now();
     // bash trap 仅能捕获 SIGTERM 等可捕获信号，SIGKILL 实际不可被 trap，但本子进程
@@ -261,7 +262,7 @@ describe("BashTool · zombie detach grace（v2.2 评审 · 测试 Issue #2）", 
   });
 });
 
-describe("BashTool · abort", () => {
+bashDescribe("BashTool · abort", () => {
   test("启动前已 abort → AbortError", async () => {
     const ac = new AbortController();
     ac.abort();
