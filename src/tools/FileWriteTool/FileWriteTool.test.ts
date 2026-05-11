@@ -18,7 +18,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
 import { WRITE_MAX_FILE_BYTES } from "../utils.ts";
@@ -252,23 +252,30 @@ describe("FileWriteTool · 错误处理", () => {
 });
 
 describe("FileWriteTool · 路径脱敏", () => {
-  // 用 $HOME 下的临时目录验证错误消息中的路径脱敏：$HOME → ~
   let homeTempDir: string | null = null;
+  let previousHome: string | undefined;
 
   beforeAll(async () => {
-    const home = homedir();
-    homeTempDir = await mkdtemp(join(home, ".nova-code-filewritetool-test-"));
+    previousHome = process.env["HOME"];
+    homeTempDir = await mkdtemp(join(tmpdir(), "nova-code-filewritetool-home-"));
+    process.env["HOME"] = homeTempDir;
   });
 
   afterAll(async () => {
     if (homeTempDir) {
       await rm(homeTempDir, { recursive: true, force: true });
     }
+    if (previousHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = previousHome;
+    }
   });
 
   test("已存在文件的错误消息把 $HOME 替换为 ~", async () => {
-    if (!homeTempDir) throw new Error("homeTempDir not set up");
-    const filePath = join(homeTempDir, "existed.txt");
+    if (homeTempDir === null) throw new Error("homeTempDir not set up");
+    const tempHome = homeTempDir;
+    const filePath = join(tempHome, "existed.txt");
     await writeFile(filePath, "old");
 
     let caught: unknown;
@@ -279,9 +286,7 @@ describe("FileWriteTool · 路径脱敏", () => {
     }
     expect(caught).toBeInstanceOf(ToolExecutionError);
     const message = (caught as ToolExecutionError).message;
-    // 不应出现 $HOME 绝对路径
-    expect(message).not.toContain(homedir());
-    // 应出现 ~ 前缀（脱敏后路径）
-    expect(message).toMatch(/~\/\.nova-code-filewritetool-test-/);
+    expect(message).not.toContain(tempHome);
+    expect(message).toContain("~/existed.txt");
   });
 });

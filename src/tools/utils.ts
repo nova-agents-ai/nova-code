@@ -178,7 +178,7 @@ export function describeType(value: unknown): string {
 import { homedir } from "node:os";
 
 export function sanitizePathForMessage(path: string): string {
-  const home = homedir();
+  const home = process.env["HOME"]?.trim() || homedir();
   if (path === home) return "~";
   if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`;
   return path;

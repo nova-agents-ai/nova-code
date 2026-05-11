@@ -14,6 +14,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { ResolvedConfig } from "../../config/config.ts";
+import { createMockAnthropicClient } from "./mockClient.ts";
 
 /**
  * 默认 SDK 内部重试次数。Anthropic SDK 自带指数退避，2 次重试足以覆盖
@@ -30,6 +31,14 @@ const DEFAULT_TIMEOUT_MS = 600_000;
  * 同步函数：构造 SDK 不发起网络请求，所以无需 await。
  */
 export function createAnthropicClient(config: ResolvedConfig): Anthropic {
+  if (process.env["NOVA_TRANSPORT"] === "mock") {
+    const scenario = process.env["NOVA_MOCK_SCENARIO"] === "edit-loop" ? "edit-loop" : "chat";
+    return createMockAnthropicClient({
+      scenario,
+      logFile: process.env["NOVA_MOCK_LOG_FILE"],
+    });
+  }
+
   const options: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: config.apiKey,
     maxRetries: DEFAULT_MAX_RETRIES,
