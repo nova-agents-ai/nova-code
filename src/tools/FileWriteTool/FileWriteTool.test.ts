@@ -254,11 +254,14 @@ describe("FileWriteTool · 错误处理", () => {
 describe("FileWriteTool · 路径脱敏", () => {
   let homeTempDir: string | null = null;
   let previousHome: string | undefined;
+  let previousUserProfile: string | undefined;
 
   beforeAll(async () => {
     previousHome = process.env["HOME"];
+    previousUserProfile = process.env["USERPROFILE"];
     homeTempDir = await mkdtemp(join(tmpdir(), "nova-code-filewritetool-home-"));
     process.env["HOME"] = homeTempDir;
+    process.env["USERPROFILE"] = homeTempDir;
   });
 
   afterAll(async () => {
@@ -269,6 +272,11 @@ describe("FileWriteTool · 路径脱敏", () => {
       delete process.env["HOME"];
     } else {
       process.env["HOME"] = previousHome;
+    }
+    if (previousUserProfile === undefined) {
+      delete process.env["USERPROFILE"];
+    } else {
+      process.env["USERPROFILE"] = previousUserProfile;
     }
   });
 
