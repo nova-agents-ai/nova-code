@@ -1,5 +1,5 @@
 /**
- * BashTool（name: "Bash"）—— 在 /bin/sh -c 下执行 shell 命令。
+ * BashTool（name: "Bash"）—— 在系统 shell 中执行命令。
  *
  * 设计稿：docs/design/M1-tools.md §4.1（含 v2.2 评审 · 测试 Issue #2 zombie
  * detach grace + v2.2 评审 · 架构 Issue #3 输出格式正则可解析性约束）。
@@ -118,7 +118,7 @@ interface SpawnOutcome {
 }
 
 /**
- * spawn /bin/sh -c command 并捕获合并输出，按"超时三段式"管理生命周期：
+ * spawn shell -c command 并捕获合并输出，按"超时三段式"管理生命周期：
  *   1. 正常等待 child exit
  *   2. 到 timeoutMs → SIGTERM；BASH_SIGTERM_GRACE_MS 后仍未退 → SIGKILL
  *   3. SIGKILL 后 BASH_SIGKILL_GRACE_MS 仍未退 → child.unref() 并 resolve（zombie）
@@ -136,13 +136,14 @@ function spawnAndWait(
     const startedAt = Date.now();
     let child: ChildProcessByStdio<null, Readable, Readable>;
     try {
-      child = spawn("/bin/sh", ["-c", command], {
+      child = spawn(command, {
+        shell: true,
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {
       reject(
-        new ToolExecutionError(TOOL_NAME, `Failed to spawn /bin/sh: ${describeError(error)}`, {
+        new ToolExecutionError(TOOL_NAME, `Failed to spawn shell: ${describeError(error)}`, {
           cause: error,
         }),
       );
@@ -293,7 +294,7 @@ function spawnAndWait(
       if (settled) return;
       settle(() => {
         reject(
-          new ToolExecutionError(TOOL_NAME, `Failed to spawn /bin/sh: ${describeError(error)}`, {
+          new ToolExecutionError(TOOL_NAME, `Failed to spawn shell: ${describeError(error)}`, {
             cause: error,
           }),
         );
@@ -309,7 +310,7 @@ function spawnAndWait(
 export const BashTool: Tool = {
   name: TOOL_NAME,
   description:
-    "Execute a shell command via /bin/sh -c. Returns combined stdout+stderr, " +
+    "Execute a shell command via the system shell. Returns combined stdout+stderr, " +
     "exit code, and duration. Output is truncated if it exceeds " +
     `${BASH_MAX_OUTPUT_BYTES} bytes. Default timeout is ${BASH_DEFAULT_TIMEOUT_MS}ms ` +
     `(max ${BASH_MAX_TIMEOUT_MS}ms). Optional cwd parameter sets the working directory. ` +
@@ -319,7 +320,7 @@ export const BashTool: Tool = {
     properties: {
       command: {
         type: "string",
-        description: "Shell command to execute. Runs in /bin/sh -c.",
+        description: "Shell command to execute.",
       },
       timeout_ms: {
         type: "number",
