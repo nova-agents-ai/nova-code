@@ -18,8 +18,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const BIN_PATH = new URL("../bin/nova-code.ts", import.meta.url).pathname;
+const BIN_PATH = fileURLToPath(new URL("../bin/nova-code.ts", import.meta.url));
 
 /** spawn chat 子进程并喂 stdin 全部行；等待退出后返回 stdout/stderr。 */
 async function runChatChild(params: {
@@ -34,6 +35,7 @@ async function runChatChild(params: {
     env: {
       PATH: process.env["PATH"] ?? "",
       HOME: params.home,
+      USERPROFILE: params.home,
       NOVA_API_KEY: "sk-mock",
       NOVA_TRANSPORT: "mock",
       NOVA_MOCK_SCENARIO: "chat",
@@ -167,6 +169,7 @@ describe("m2-e2e-chat", () => {
       env: {
         PATH: process.env["PATH"] ?? "",
         HOME: home,
+        USERPROFILE: home,
         NOVA_API_KEY: "sk-mock",
         NOVA_TRANSPORT: "mock",
         NOVA_MOCK_SCENARIO: "chat",

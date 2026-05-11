@@ -542,11 +542,14 @@ describe("FileEditTool · abort", () => {
 describe("FileEditTool · 路径脱敏", () => {
   let homeTempDir: string | null = null;
   let previousHome: string | undefined;
+  let previousUserProfile: string | undefined;
 
   beforeAll(async () => {
     previousHome = process.env["HOME"];
+    previousUserProfile = process.env["USERPROFILE"];
     homeTempDir = await mkdtemp(join(tmpdir(), "nova-code-fileedittool-home-"));
     process.env["HOME"] = homeTempDir;
+    process.env["USERPROFILE"] = homeTempDir;
   });
 
   afterAll(async () => {
@@ -555,6 +558,11 @@ describe("FileEditTool · 路径脱敏", () => {
       delete process.env["HOME"];
     } else {
       process.env["HOME"] = previousHome;
+    }
+    if (previousUserProfile === undefined) {
+      delete process.env["USERPROFILE"];
+    } else {
+      process.env["USERPROFILE"] = previousUserProfile;
     }
   });
 

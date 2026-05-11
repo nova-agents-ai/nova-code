@@ -178,10 +178,18 @@ export function describeType(value: unknown): string {
 import { homedir } from "node:os";
 
 export function sanitizePathForMessage(path: string): string {
-  const home = process.env["HOME"]?.trim() || homedir();
-  if (path === home) return "~";
-  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`;
+  const home = process.env["HOME"]?.trim() || process.env["USERPROFILE"]?.trim() || homedir();
+  const normalizedPath = normalizeForComparison(path);
+  const normalizedHome = normalizeForComparison(home);
+  if (normalizedPath === normalizedHome) return "~";
+  if (normalizedPath.startsWith(`${normalizedHome}/`)) {
+    return `~${normalizedPath.slice(normalizedHome.length)}`;
+  }
   return path;
+}
+
+function normalizeForComparison(value: string): string {
+  return value.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/$/, "");
 }
 
 /**

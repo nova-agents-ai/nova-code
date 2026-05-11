@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   RawMessageStreamEvent,
@@ -521,7 +522,7 @@ describe("integration · tool error propagation", () => {
 // 配置加载 → Agent Loop → 7 个内置工具之一链的完整端到端流。
 // ───────────────────────────────────────────────────────────────────────────
 
-const BIN_PATH = new URL("../bin/nova-code.ts", import.meta.url).pathname;
+const BIN_PATH = fileURLToPath(new URL("../bin/nova-code.ts", import.meta.url));
 
 describe("m1-5-e2e-writeflow", () => {
   test("real child process + mock LLM: Grep → FileEdit → Bash → end_turn renames oldFn to newFn", async () => {
