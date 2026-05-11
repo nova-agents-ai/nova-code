@@ -180,7 +180,7 @@ import { homedir } from "node:os";
 export function sanitizePathForMessage(path: string): string {
   const home = homedir();
   if (path === home) return "~";
-  if (path.startsWith(home + "/")) return "~" + path.slice(home.length);
+  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`;
   return path;
 }
 
@@ -199,10 +199,7 @@ export async function validateCwd(cwd: unknown, toolName: string): Promise<strin
   if (cwd === undefined || cwd === null) return process.cwd();
 
   if (typeof cwd !== "string") {
-    throw new ToolExecutionError(
-      toolName,
-      `cwd must be a string. Got ${describeType(cwd)}.`,
-    );
+    throw new ToolExecutionError(toolName, `cwd must be a string. Got ${describeType(cwd)}.`);
   }
 
   const absolute = isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
@@ -212,11 +209,7 @@ export async function validateCwd(cwd: unknown, toolName: string): Promise<strin
   try {
     info = await fsStat(absolute);
   } catch (error) {
-    throw new ToolExecutionError(
-      toolName,
-      `cwd does not exist: ${sanitized}`,
-      { cause: error },
-    );
+    throw new ToolExecutionError(toolName, `cwd does not exist: ${sanitized}`, { cause: error });
   }
 
   if (!info.isDirectory()) {
@@ -226,11 +219,7 @@ export async function validateCwd(cwd: unknown, toolName: string): Promise<strin
   try {
     await access(absolute, fsConstants.R_OK);
   } catch (error) {
-    throw new ToolExecutionError(
-      toolName,
-      `cwd not accessible: ${sanitized}`,
-      { cause: error },
-    );
+    throw new ToolExecutionError(toolName, `cwd not accessible: ${sanitized}`, { cause: error });
   }
 
   return absolute;

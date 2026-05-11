@@ -19,18 +19,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   RawMessageStreamEvent,
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ResolvedConfig } from "./config/config.ts";
 import { runAgentLoop } from "./QueryEngine.ts";
-import { type AgentEvent, AgentStopReasonEnum } from "./types/message.ts";
 import { builtinTools } from "./tools.ts";
+import { type AgentEvent, AgentStopReasonEnum } from "./types/message.ts";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fake SDK Client（与 query.test.ts 的 makeFakeClient 同构，本地复制以保持
@@ -208,9 +208,7 @@ function collectToolCalls(
 /** 拼接所有 text_delta 内容。 */
 function joinTextDeltas(events: readonly AgentEvent[]): string {
   return events
-    .filter(
-      (e): e is Extract<AgentEvent, { type: "text_delta" }> => e.type === "text_delta",
-    )
+    .filter((e): e is Extract<AgentEvent, { type: "text_delta" }> => e.type === "text_delta")
     .map((e) => e.delta)
     .join("");
 }
@@ -264,9 +262,7 @@ describe("integration · 4-turn edit loop (LS → FileWrite → FileEdit → Fil
       // Turn 4: FileRead 验证修改结果（必需字段：path）
       {
         textChunks: ["Verifying the change..."],
-        toolUses: [
-          { id: "tu_4", name: "FileRead", input: { path: targetFile } },
-        ],
+        toolUses: [{ id: "tu_4", name: "FileRead", input: { path: targetFile } }],
         stopReason: "tool_use",
       },
       // Turn 5: end_turn，宣布完成
@@ -300,12 +296,7 @@ describe("integration · 4-turn edit loop (LS → FileWrite → FileEdit → Fil
 
     // ── 工具调用顺序与名字（PascalCase 对齐） ────────────────────────
     const toolCalls = collectToolCalls(events);
-    expect(toolCalls.map((t) => t.toolName)).toEqual([
-      "LS",
-      "FileWrite",
-      "FileEdit",
-      "FileRead",
-    ]);
+    expect(toolCalls.map((t) => t.toolName)).toEqual(["LS", "FileWrite", "FileEdit", "FileRead"]);
 
     // ── 每轮 tool_result 都成功 ─────────────────────────────────────
     const toolResults = collectToolResults(events);
@@ -345,9 +336,7 @@ describe("integration · 4-turn edit loop (LS → FileWrite → FileEdit → Fil
 
     // ── 终止原因 ────────────────────────────────────────────────────
     const finalTurnEnd = events
-      .filter(
-        (e): e is Extract<AgentEvent, { type: "turn_end" }> => e.type === "turn_end",
-      )
+      .filter((e): e is Extract<AgentEvent, { type: "turn_end" }> => e.type === "turn_end")
       .at(-1);
     expect(finalTurnEnd?.stopReason).toBe(AgentStopReasonEnum.END_TURN);
     expect(events.at(-1)?.type).toBe("done");
@@ -533,72 +522,67 @@ describe("integration · tool error propagation", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("m1-5-e2e-writeflow", () => {
-  test(
-    "real child process + mock server: Grep → FileEdit → Bash → end_turn renames oldFn to newFn",
-    async () => {
-      // 1) fixture：3 个含 oldFn 的 .ts 文件，a.ts 会被 FileEdit 改写
-      const aPath = join(workDir, "a.ts");
-      const bPath = join(workDir, "b.ts");
-      const cPath = join(workDir, "c.ts");
-      await Bun.write(aPath, "export function oldFn() { return 1; }\n");
-      await Bun.write(bPath, "// TODO: also rename oldFn here one day\n");
-      await Bun.write(cPath, "// oldFn appears in comment too\n");
+  test("real child process + mock server: Grep → FileEdit → Bash → end_turn renames oldFn to newFn", async () => {
+    // 1) fixture：3 个含 oldFn 的 .ts 文件，a.ts 会被 FileEdit 改写
+    const aPath = join(workDir, "a.ts");
+    const bPath = join(workDir, "b.ts");
+    const cPath = join(workDir, "c.ts");
+    await Bun.write(aPath, "export function oldFn() { return 1; }\n");
+    await Bun.write(bPath, "// TODO: also rename oldFn here one day\n");
+    await Bun.write(cPath, "// oldFn appears in comment too\n");
 
-      // 2) 内嵌 mock server（端口 0 自动选可用端口，避免与其他测试冲突）
-      const server = Bun.serve({
-        port: 0,
-        fetch: (request) => handleEditLoopRequest(request, workDir),
+    // 2) 内嵌 mock server（端口 0 自动选可用端口，避免与其他测试冲突）
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) => handleEditLoopRequest(request, workDir),
+    });
+
+    try {
+      const baseURL = `http://localhost:${server.port}`;
+
+      // 3) spawn 真子进程：bun run bin/nova-code.ts ask "..."
+      //    stdin 必须给个 "ignore"，否则 readLineFromStdin 会阻塞（由于传了行内
+      //    question，实际并不会执行 stdin 读取，但保险起见关闭 stdin）
+      const proc = Bun.spawn({
+        cmd: ["bun", "run", BIN_PATH, "ask", "rename oldFn to newFn"],
+        env: {
+          ...process.env,
+          NOVA_API_KEY: "sk-mock-anything",
+          NOVA_BASE_URL: `${baseURL}/?scenario=edit-loop`,
+          MOCK_EDIT_WORKDIR: workDir,
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
       });
 
-      try {
-        const baseURL = `http://localhost:${server.port}`;
+      // 10s 挂起防护：setTimeout 与进程赛跑
+      const timeoutHandle = setTimeout(() => proc.kill(), 10_000);
+      const exitCode = await proc.exited;
+      clearTimeout(timeoutHandle);
 
-        // 3) spawn 真子进程：bun run bin/nova-code.ts ask "..."
-        //    stdin 必须给个 "ignore"，否则 readLineFromStdin 会阻塞（由于传了行内
-        //    question，实际并不会执行 stdin 读取，但保险起见关闭 stdin）
-        const proc = Bun.spawn({
-          cmd: ["bun", "run", BIN_PATH, "ask", "rename oldFn to newFn"],
-          env: {
-            ...process.env,
-            NOVA_API_KEY: "sk-mock-anything",
-            NOVA_BASE_URL: `${baseURL}/?scenario=edit-loop`,
-            MOCK_EDIT_WORKDIR: workDir,
-          },
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
 
-        // 10s 挂起防护：setTimeout 与进程赛跑
-        const timeoutHandle = setTimeout(() => proc.kill(), 10_000);
-        const exitCode = await proc.exited;
-        clearTimeout(timeoutHandle);
+      // 4) 断言：退出码 0
+      expect(exitCode, `non-zero exit.\nstdout=${stdout}\nstderr=${stderr}`).toBe(0);
 
-        const stdout = await new Response(proc.stdout).text();
-        const stderr = await new Response(proc.stderr).text();
+      // stdout 含 "Done"
+      expect(stdout).toContain("Done");
 
-        // 4) 断言：退出码 0
-        expect(exitCode, `non-zero exit.\nstdout=${stdout}\nstderr=${stderr}`).toBe(0);
+      // 5) fixture 文件终态
+      const aFinal = await readFile(aPath, "utf8");
+      expect(aFinal).toBe("export function newFn() { return 1; }\n");
 
-        // stdout 含 "Done"
-        expect(stdout).toContain("Done");
-
-        // 5) fixture 文件终态
-        const aFinal = await readFile(aPath, "utf8");
-        expect(aFinal).toBe("export function newFn() { return 1; }\n");
-
-        // b.ts / c.ts 未被改动（剧本只改 a.ts）
-        const bFinal = await readFile(bPath, "utf8");
-        const cFinal = await readFile(cPath, "utf8");
-        expect(bFinal).toContain("oldFn");
-        expect(cFinal).toContain("oldFn");
-      } finally {
-        server.stop(true);
-      }
-    },
-    // 整个用例的测试框架超时：15s 足够走完 4 轮 mock 交互 + fs IO
-    15_000,
-  );
+      // b.ts / c.ts 未被改动（剧本只改 a.ts）
+      const bFinal = await readFile(bPath, "utf8");
+      const cFinal = await readFile(cPath, "utf8");
+      expect(bFinal).toContain("oldFn");
+      expect(cFinal).toContain("oldFn");
+    } finally {
+      server.stop(true);
+    }
+  }, 15_000); // 整个用例的测试框架超时：15s 足够走完 4 轮 mock 交互 + fs IO
 });
 
 // 完全内嵌的 edit-loop mock：

@@ -36,11 +36,18 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
   const debugSink: DebugSink = options.debug
     ? createFileDebugSink({ pretty: options.pretty })
     : NULL_DEBUG_SINK;
+  // LLM 原始请求/响应日志写入独立文件（ask-llm-*.log），与 AgentEvent 日志并列
+  const llmLogSink: DebugSink = options.debug
+    ? createFileDebugSink({ pretty: options.pretty, prefix: "ask-llm" })
+    : NULL_DEBUG_SINK;
 
   try {
     if (options.debug && debugSink.logFilePath !== null) {
       // 让用户知道完整日志去哪儿了；此条只走 stderr，不入日志文件（避免冗余）
       process.stderr.write(`[debug] log file: ${debugSink.logFilePath}\n`);
+      if (llmLogSink.logFilePath !== null) {
+        process.stderr.write(`[debug] llm log file: ${llmLogSink.logFilePath}\n`);
+      }
       if (options.pretty) {
         process.stderr.write("[debug] pretty mode: on\n");
       }
@@ -64,6 +71,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       userPrompt: question,
       tools: builtinTools,
       signal: abortController.signal,
+      llmLogSink: options.debug ? llmLogSink : undefined,
     });
 
     for await (const event of generator) {
@@ -106,6 +114,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     return handleAskError(error);
   } finally {
     debugSink.close();
+    llmLogSink.close();
     process.removeListener("SIGINT", onSigint);
   }
 }

@@ -17,16 +17,16 @@
 import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { Tool } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import {
   describeError,
   GREP_MAX_LINE_BYTES,
   GREP_MAX_MATCHES,
   isIgnoredPath,
   requireStringField,
-  sanitizePathForMessage,
   SEARCH_IGNORE_DIRS,
+  sanitizePathForMessage,
 } from "../utils.ts";
 
 const TOOL_NAME = "Grep";
@@ -49,7 +49,7 @@ interface GrepMatch {
  * - string：rg 可用，值为 binary 路径（M1 仅记录 "rg" 占位，未来可扩展为绝对路径）
  * - null：rg 不可用，永久 fallback
  */
-let ripgrepPath: string | null | undefined = undefined;
+let ripgrepPath: string | null | undefined;
 
 /** 仅供测试使用：重置 ripgrep 检测缓存，避免测试间状态污染。 */
 export function _resetRipgrepCache(): void {
@@ -358,7 +358,7 @@ async function runNodeGrep(args: GrepArgs): Promise<GrepResult> {
     if (matches.length >= GREP_MAX_MATCHES) return;
     if (args.signal.aborted) return;
 
-    let entries;
+    let entries: Array<import("node:fs").Dirent>;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
@@ -409,6 +409,7 @@ async function runNodeGrep(args: GrepArgs): Promise<GrepResult> {
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (matches.length >= GREP_MAX_MATCHES) return;
+      // biome-ignore lint/style/noNonNullAssertion: i < lines.length guarantees defined access
       const line = lines[i]!;
       if (args.regex.test(line)) {
         matches.push({
@@ -443,9 +444,7 @@ async function runNodeGrep(args: GrepArgs): Promise<GrepResult> {
 //
 // 策略：用 `Bun.Glob` 直接匹配相对路径与 basename 两种形式（取并集），
 // 兼顾仅 basename 的 `*.ts` 与带目录的递归通配（`src/<双星>/*.ts`）两种常见写法。
-function buildIncludeMatcher(
-  include: string,
-): (relPath: string, basename: string) => boolean {
+function buildIncludeMatcher(include: string): (relPath: string, basename: string) => boolean {
   const glob = new Bun.Glob(include);
   return (relPath, basename) => glob.match(relPath) || glob.match(basename);
 }
@@ -467,9 +466,7 @@ function formatOutput(result: GrepResult, searchRoot: string): string {
   const fileSet = new Set<string>();
   for (const m of matches) fileSet.add(m.relativePath);
 
-  const lines = matches.map(
-    (m) => `${m.relativePath}:${m.lineNumber}: ${m.line}`,
-  );
+  const lines = matches.map((m) => `${m.relativePath}:${m.lineNumber}: ${m.line}`);
   const summary = truncated
     ? `[truncated, showing first ${matches.length} matches across ${fileSet.size} files]`
     : `[${matches.length} match${matches.length === 1 ? "" : "es"} in ${fileSet.size} file${fileSet.size === 1 ? "" : "s"}]`;
@@ -478,10 +475,7 @@ function formatOutput(result: GrepResult, searchRoot: string): string {
 
 // =================== helpers ===================
 
-function readBoolInput(
-  input: Readonly<Record<string, unknown>>,
-  field: string,
-): boolean {
+function readBoolInput(input: Readonly<Record<string, unknown>>, field: string): boolean {
   const value = input[field];
   if (value === undefined || value === null) return false;
   if (typeof value !== "boolean") {

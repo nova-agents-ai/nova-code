@@ -13,8 +13,8 @@
 
 import { stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import type { Tool } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import {
   describeError,
   GLOB_MAX_RESULTS,
@@ -81,11 +81,9 @@ export const GlobTool: Tool = {
       }
     } catch (error) {
       // scan 实测不抛，但保留 catch 以防底层 IO 异常（如 cwd 在迭代中被删）
-      throw new ToolExecutionError(
-        TOOL_NAME,
-        `Glob scan failed: ${describeError(error)}`,
-        { cause: error },
-      );
+      throw new ToolExecutionError(TOOL_NAME, `Glob scan failed: ${describeError(error)}`, {
+        cause: error,
+      });
     }
 
     if (context.signal.aborted) {

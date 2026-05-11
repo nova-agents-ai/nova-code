@@ -19,8 +19,8 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import type { Tool, ToolExecutionContext } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { Tool, ToolExecutionContext } from "../../Tool.ts";
 import {
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_OUTPUT_BYTES,
@@ -142,11 +142,9 @@ function spawnAndWait(
       });
     } catch (error) {
       reject(
-        new ToolExecutionError(
-          TOOL_NAME,
-          `Failed to spawn /bin/sh: ${describeError(error)}`,
-          { cause: error },
-        ),
+        new ToolExecutionError(TOOL_NAME, `Failed to spawn /bin/sh: ${describeError(error)}`, {
+          cause: error,
+        }),
       );
       return;
     }
@@ -295,11 +293,9 @@ function spawnAndWait(
       if (settled) return;
       settle(() => {
         reject(
-          new ToolExecutionError(
-            TOOL_NAME,
-            `Failed to spawn /bin/sh: ${describeError(error)}`,
-            { cause: error },
-          ),
+          new ToolExecutionError(TOOL_NAME, `Failed to spawn /bin/sh: ${describeError(error)}`, {
+            cause: error,
+          }),
         );
       });
     });
@@ -345,10 +341,7 @@ export const BashTool: Tool = {
 
     const hardHit = checkHardBlacklist(command);
     if (hardHit !== null) {
-      throw new ToolExecutionError(
-        TOOL_NAME,
-        `Command rejected by safety filter: ${hardHit.name}`,
-      );
+      throw new ToolExecutionError(TOOL_NAME, `Command rejected by safety filter: ${hardHit.name}`);
     }
 
     const softWarnings = checkSoftWarnings(command);

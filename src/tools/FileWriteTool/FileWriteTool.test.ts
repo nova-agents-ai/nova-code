@@ -187,10 +187,7 @@ describe("FileWriteTool · 错误处理", () => {
       await writeFile(filePath, "old");
 
       await expect(
-        FileWriteTool.execute(
-          { path: filePath, content: "new" },
-          { signal: NOOP_SIGNAL },
-        ),
+        FileWriteTool.execute({ path: filePath, content: "new" }, { signal: NOOP_SIGNAL }),
       ).rejects.toThrow(/already exists.*FileEdit/);
 
       // 原文件内容未被覆盖
@@ -208,10 +205,7 @@ describe("FileWriteTool · 错误处理", () => {
       // 5MB + 1 字节
       const huge = "a".repeat(WRITE_MAX_FILE_BYTES + 1);
       await expect(
-        FileWriteTool.execute(
-          { path: filePath, content: huge },
-          { signal: NOOP_SIGNAL },
-        ),
+        FileWriteTool.execute({ path: filePath, content: huge }, { signal: NOOP_SIGNAL }),
       ).rejects.toThrow(/Content too large/);
 
       // 文件未被创建
@@ -222,9 +216,9 @@ describe("FileWriteTool · 错误处理", () => {
   });
 
   test("path 字段缺失 → ToolExecutionError", async () => {
-    await expect(
-      FileWriteTool.execute({ content: "x" }, { signal: NOOP_SIGNAL }),
-    ).rejects.toThrow(/Missing required string field 'path'/);
+    await expect(FileWriteTool.execute({ content: "x" }, { signal: NOOP_SIGNAL })).rejects.toThrow(
+      /Missing required string field 'path'/,
+    );
   });
 
   test("content 字段缺失 → ToolExecutionError", async () => {
@@ -235,10 +229,7 @@ describe("FileWriteTool · 错误处理", () => {
 
   test("content 非字符串 → ToolExecutionError", async () => {
     await expect(
-      FileWriteTool.execute(
-        { path: "/tmp/x", content: 123 },
-        { signal: NOOP_SIGNAL },
-      ),
+      FileWriteTool.execute({ path: "/tmp/x", content: 123 }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/Missing required string field 'content'/);
   });
 
@@ -250,10 +241,7 @@ describe("FileWriteTool · 错误处理", () => {
       controller.abort();
 
       await expect(
-        FileWriteTool.execute(
-          { path: filePath, content: "x" },
-          { signal: controller.signal },
-        ),
+        FileWriteTool.execute({ path: filePath, content: "x" }, { signal: controller.signal }),
       ).rejects.toThrow(AbortError);
 
       await expect(readFile(filePath, "utf8")).rejects.toThrow();
@@ -285,10 +273,7 @@ describe("FileWriteTool · 路径脱敏", () => {
 
     let caught: unknown;
     try {
-      await FileWriteTool.execute(
-        { path: filePath, content: "new" },
-        { signal: NOOP_SIGNAL },
-      );
+      await FileWriteTool.execute({ path: filePath, content: "new" }, { signal: NOOP_SIGNAL });
     } catch (error) {
       caught = error;
     }

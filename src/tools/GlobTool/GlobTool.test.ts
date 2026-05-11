@@ -18,8 +18,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { ToolExecutionContext } from "../../Tool.ts";
 import { GLOB_MAX_RESULTS } from "../utils.ts";
 import { GlobTool } from "./GlobTool.ts";
 
@@ -57,29 +57,24 @@ describe("GlobTool · meta", () => {
 
 describe("GlobTool · input validation", () => {
   it("rejects missing pattern", async () => {
-    await expect(GlobTool.execute({}, makeContext())).rejects.toBeInstanceOf(
+    await expect(GlobTool.execute({}, makeContext())).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("rejects non-string pattern", async () => {
+    await expect(GlobTool.execute({ pattern: 7 }, makeContext())).rejects.toBeInstanceOf(
       ToolExecutionError,
     );
   });
 
-  it("rejects non-string pattern", async () => {
-    await expect(
-      GlobTool.execute({ pattern: 7 }, makeContext()),
-    ).rejects.toBeInstanceOf(ToolExecutionError);
-  });
-
   it("rejects empty pattern", async () => {
-    await expect(
-      GlobTool.execute({ pattern: "" }, makeContext()),
-    ).rejects.toBeInstanceOf(ToolExecutionError);
+    await expect(GlobTool.execute({ pattern: "" }, makeContext())).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
   });
 
   it("rejects cwd that does not exist", async () => {
     await expect(
-      GlobTool.execute(
-        { pattern: "*.ts", cwd: join(workDir, "no-such-dir") },
-        makeContext(),
-      ),
+      GlobTool.execute({ pattern: "*.ts", cwd: join(workDir, "no-such-dir") }, makeContext()),
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
@@ -101,10 +96,7 @@ describe("GlobTool · basic patterns", () => {
     await mkdir(join(workDir, "src"), { recursive: true });
     await writeFile(join(workDir, "src", "deep.ts"), "x");
 
-    const result = await GlobTool.execute(
-      { pattern: "*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*.ts", cwd: workDir }, makeContext());
     expect(result).toContain("a.ts");
     expect(result).not.toContain("b.js");
     expect(result).not.toContain("src/deep.ts");
@@ -116,10 +108,7 @@ describe("GlobTool · basic patterns", () => {
     await writeFile(join(workDir, "src", "sub", "deep.ts"), "x");
     await writeFile(join(workDir, "src", "mid.ts"), "x");
 
-    const result = await GlobTool.execute(
-      { pattern: "**/*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "**/*.ts", cwd: workDir }, makeContext());
     expect(result).toContain("a.ts");
     expect(result).toContain("src/mid.ts");
     expect(result).toContain("src/sub/deep.ts");
@@ -130,10 +119,7 @@ describe("GlobTool · basic patterns", () => {
     await writeFile(join(workDir, "b.js"), "x");
     await writeFile(join(workDir, "c.md"), "x");
 
-    const result = await GlobTool.execute(
-      { pattern: "*.{ts,js}", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*.{ts,js}", cwd: workDir }, makeContext());
     expect(result).toContain("a.ts");
     expect(result).toContain("b.js");
     expect(result).not.toContain("c.md");
@@ -141,10 +127,7 @@ describe("GlobTool · basic patterns", () => {
 
   it("returns 'No files match.' when nothing matches", async () => {
     await writeFile(join(workDir, "a.ts"), "x");
-    const result = await GlobTool.execute(
-      { pattern: "*.zzz", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*.zzz", cwd: workDir }, makeContext());
     expect(result).toBe("No files match.");
   });
 });
@@ -159,10 +142,7 @@ describe("GlobTool · blacklist", () => {
     await writeFile(join(workDir, "node_modules", "pkg", "x.ts"), "x");
     await writeFile(join(workDir, "src.ts"), "x");
 
-    const result = await GlobTool.execute(
-      { pattern: "**/*", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "**/*", cwd: workDir }, makeContext());
     expect(result).toContain("src.ts");
     expect(result).not.toContain(".git");
     expect(result).not.toContain("node_modules");
@@ -172,10 +152,7 @@ describe("GlobTool · blacklist", () => {
     // 段精确匹配语义 —— "my-node_modules" 不应被跳过
     await mkdir(join(workDir, "my-node_modules"), { recursive: true });
     await writeFile(join(workDir, "my-node_modules", "x.ts"), "x");
-    const result = await GlobTool.execute(
-      { pattern: "**/*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "**/*.ts", cwd: workDir }, makeContext());
     expect(result).toContain("my-node_modules/x.ts");
   });
 });
@@ -198,14 +175,9 @@ describe("GlobTool · mtime sort", () => {
     await utimes(middleFile, new Date(now - 30_000), new Date(now - 30_000));
     await utimes(newFile, new Date(now - 1_000), new Date(now - 1_000));
 
-    const result = await GlobTool.execute(
-      { pattern: "*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*.ts", cwd: workDir }, makeContext());
 
-    const fileLines = result
-      .split("\n")
-      .filter((l) => l.endsWith(".ts"));
+    const fileLines = result.split("\n").filter((l) => l.endsWith(".ts"));
     // 按出现顺序：new → middle → old
     expect(fileLines).toEqual(["new.ts", "middle.ts", "old.ts"]);
   });
@@ -221,13 +193,8 @@ describe("GlobTool · truncation", () => {
       await writeFile(join(workDir, `f${i}.ts`), "x");
     }
 
-    const result = await GlobTool.execute(
-      { pattern: "*.ts", cwd: workDir },
-      makeContext(),
-    );
-    const fileLines = result
-      .split("\n")
-      .filter((l) => l.endsWith(".ts"));
+    const result = await GlobTool.execute({ pattern: "*.ts", cwd: workDir }, makeContext());
+    const fileLines = result.split("\n").filter((l) => l.endsWith(".ts"));
     expect(fileLines.length).toBe(GLOB_MAX_RESULTS);
     expect(result).toMatch(/\[truncated, showing first \d+ matches\]/);
   });
@@ -240,10 +207,7 @@ describe("GlobTool · onlyFiles", () => {
     await mkdir(join(workDir, "subdir"), { recursive: true });
     await writeFile(join(workDir, "afile"), "x");
 
-    const result = await GlobTool.execute(
-      { pattern: "*", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*", cwd: workDir }, makeContext());
     expect(result).toContain("afile");
     expect(result).not.toContain("subdir");
   });
@@ -256,10 +220,7 @@ describe("GlobTool · abort", () => {
     const ctl = new AbortController();
     ctl.abort();
     await expect(
-      GlobTool.execute(
-        { pattern: "*.ts", cwd: workDir },
-        makeContext(ctl.signal),
-      ),
+      GlobTool.execute({ pattern: "*.ts", cwd: workDir }, makeContext(ctl.signal)),
     ).rejects.toBeInstanceOf(AbortError);
   });
 
@@ -280,10 +241,7 @@ describe("GlobTool · abort", () => {
     // 此时 GlobTool 在 scan 入口前的 signal 检查会抛 AbortError。
     queueMicrotask(() => ctl.abort());
     await expect(
-      GlobTool.execute(
-        { pattern: "**/*.ts", cwd: workDir },
-        makeContext(ctl.signal),
-      ),
+      GlobTool.execute({ pattern: "**/*.ts", cwd: workDir }, makeContext(ctl.signal)),
     ).rejects.toBeInstanceOf(AbortError);
   });
 });
@@ -293,20 +251,14 @@ describe("GlobTool · abort", () => {
 describe("GlobTool · output format", () => {
   it("singular vs plural in summary", async () => {
     await writeFile(join(workDir, "only.ts"), "x");
-    const result = await GlobTool.execute(
-      { pattern: "*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "*.ts", cwd: workDir }, makeContext());
     expect(result).toMatch(/\[1 match\]/);
   });
 
   it("paths use posix forward slash separator", async () => {
     await mkdir(join(workDir, "src"), { recursive: true });
     await writeFile(join(workDir, "src", "a.ts"), "x");
-    const result = await GlobTool.execute(
-      { pattern: "**/*.ts", cwd: workDir },
-      makeContext(),
-    );
+    const result = await GlobTool.execute({ pattern: "**/*.ts", cwd: workDir }, makeContext());
     expect(result).toContain("src/a.ts");
     // 不应含反斜杠
     expect(result).not.toContain("src\\a.ts");

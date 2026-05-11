@@ -12,6 +12,7 @@ import { ConfigError } from "../errors/index.ts";
 import {
   getConfigFilePath,
   getLogsDirPath,
+  getSessionsDirPath,
   loadConfig,
   loadPersistedConfig,
   resolveConfig,
@@ -42,6 +43,20 @@ describe("config - getLogsDirPath", () => {
     const path = getLogsDirPath({ homeDir: "/fake/home" });
     // 使用正则匹配，兼容 Windows (\) 和 POSIX (/) 路径分隔符
     expect(path).toMatch(/[\\/]fake[\\/]home[\\/]\.nova-code[\\/]logs$/);
+  });
+});
+
+describe("config - getSessionsDirPath", () => {
+  test("以 ~/.nova-code/sessions 为路径", () => {
+    const path = getSessionsDirPath({ homeDir: "/fake/home" });
+    expect(path).toMatch(/[\\/]fake[\\/]home[\\/]\.nova-code[\\/]sessions$/);
+  });
+
+  test("不传 source 时基于当前 homedir()\uff08只验证以 /sessions 结尾）", () => {
+    const path = getSessionsDirPath();
+    expect(path.endsWith("/.nova-code/sessions") || path.endsWith("\\.nova-code\\sessions")).toBe(
+      true,
+    );
   });
 });
 

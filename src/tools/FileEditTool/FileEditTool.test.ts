@@ -75,11 +75,7 @@ describe("FileEditTool · 元信息", () => {
   });
 
   test("input_schema 必填字段为 path + old_string + new_string", () => {
-    expect(FileEditTool.input_schema.required).toEqual([
-      "path",
-      "old_string",
-      "new_string",
-    ]);
+    expect(FileEditTool.input_schema.required).toEqual(["path", "old_string", "new_string"]);
   });
 });
 
@@ -87,28 +83,19 @@ describe("FileEditTool · 元信息", () => {
 describe("FileEditTool · 前置校验", () => {
   test("path 字段缺失 → ToolExecutionError", async () => {
     await expect(
-      FileEditTool.execute(
-        { old_string: "a", new_string: "b" },
-        { signal: NOOP_SIGNAL },
-      ),
+      FileEditTool.execute({ old_string: "a", new_string: "b" }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/Missing required string field 'path'/);
   });
 
   test("old_string 字段缺失 → ToolExecutionError", async () => {
     await expect(
-      FileEditTool.execute(
-        { path: "/tmp/x", new_string: "b" },
-        { signal: NOOP_SIGNAL },
-      ),
+      FileEditTool.execute({ path: "/tmp/x", new_string: "b" }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/Missing required string field 'old_string'/);
   });
 
   test("new_string 字段缺失 → ToolExecutionError", async () => {
     await expect(
-      FileEditTool.execute(
-        { path: "/tmp/x", old_string: "a" },
-        { signal: NOOP_SIGNAL },
-      ),
+      FileEditTool.execute({ path: "/tmp/x", old_string: "a" }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/Missing required string field 'new_string'/);
   });
 
@@ -166,10 +153,7 @@ describe("FileEditTool · 前置校验", () => {
     const { path, cleanup } = await setupFile("a".repeat(EDIT_MAX_FILE_BYTES + 1));
     try {
       await expect(
-        FileEditTool.execute(
-          { path, old_string: "a", new_string: "b" },
-          { signal: NOOP_SIGNAL },
-        ),
+        FileEditTool.execute({ path, old_string: "a", new_string: "b" }, { signal: NOOP_SIGNAL }),
       ).rejects.toThrow(/file too large to edit/);
     } finally {
       await cleanup();
@@ -358,8 +342,7 @@ describe("FileEditTool · replace_all", () => {
   test("replace_all 命中 > 3 个不连续位置时只展示前 3 hunk + omitted 提示", async () => {
     // 5 个 TODO 各独占一段，相隔 5 行（远超 context 重叠范围），保证 5 个独立 hunk
     const sep = "\n.\n.\n.\n.\n.\n"; // 5 行无关内容做分隔
-    const content =
-      "TODO 1" + sep + "TODO 2" + sep + "TODO 3" + sep + "TODO 4" + sep + "TODO 5\n";
+    const content = `TODO 1${sep}TODO 2${sep}TODO 3${sep}TODO 4${sep}TODO 5\n`;
     const { path, cleanup } = await setupFile(content);
     try {
       const result = await FileEditTool.execute(
@@ -446,10 +429,7 @@ describe("FileEditTool · 行数统计口径", () => {
     const { path, cleanup } = await setupFile("");
     try {
       await expect(
-        FileEditTool.execute(
-          { path, old_string: "x", new_string: "y" },
-          { signal: NOOP_SIGNAL },
-        ),
+        FileEditTool.execute({ path, old_string: "x", new_string: "y" }, { signal: NOOP_SIGNAL }),
       ).rejects.toThrow(/has 0 lines and 0 bytes/);
     } finally {
       await cleanup();

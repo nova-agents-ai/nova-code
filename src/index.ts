@@ -27,17 +27,14 @@ export {
   MaxTurnsExceededError,
   ToolExecutionError,
 } from "./errors/index.ts";
-export { LLMApiError } from "./services/api/errors.ts";
-
 // Agent loop（M1.5 起搬到 src/QueryEngine.ts）
 export type { AgentLoopParams } from "./QueryEngine.ts";
 export { runAgentLoop } from "./QueryEngine.ts";
-
-// 工具系统：注册表 + 内置工具（M1 步骤 1 起搬到顶层 src/tools.ts）
-export { builtinTools, FileReadTool, findTool, LSTool } from "./tools.ts";
-
+export { LLMApiError } from "./services/api/errors.ts";
 // Tool 接口（M1 步骤 1 起搬到顶层 src/Tool.ts）
 export type { Tool, ToolExecutionContext, ToolInputSchema } from "./Tool.ts";
+// 工具系统：注册表 + 内置工具（M1 步骤 1 起搬到顶层 src/tools.ts）
+export { builtinTools, FileReadTool, findTool, LSTool } from "./tools.ts";
 
 // 消息 / 事件类型（M1.5 起搬到 src/types/message.ts）
 export type {

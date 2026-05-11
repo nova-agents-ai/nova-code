@@ -12,6 +12,7 @@
  */
 
 import { askCommand } from "./commands/AskCommand/AskCommand.ts";
+import { chatCommand } from "./commands/ChatCommand/ChatCommand.ts";
 import { echoCommand } from "./commands/EchoCommand/EchoCommand.ts";
 import { helloCommand } from "./commands/HelloCommand/HelloCommand.ts";
 import type { CommandDefinition } from "./commands/types.ts";
@@ -29,6 +30,7 @@ export const builtinCommands: readonly CommandDefinition[] = [
   helloCommand,
   echoCommand,
   askCommand,
+  chatCommand,
 ];
 
 /**

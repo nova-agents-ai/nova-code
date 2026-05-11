@@ -51,13 +51,39 @@ import {
 } from "./types/message.ts";
 
 /**
+ * 用于记录原始 LLM 请求/响应的最小 sink 接口。
+ *
+ * 故意不直接从 AskCommand/debugSink.ts import DebugSink：
+ * - QueryEngine 位在顶层，不应依赖 commands/ 子目录
+ * - DebugSink 我们只用到 write，鸭子类型即可（TS 结构型兼容）
+ *
+ * 调用方（runAskWithLLM / ChatCommand）在 debug 开启时传入一个独立的
+ * createFileDebugSink（prefix: "ask-llm" | "chat-llm"），落盘到与 AgentEvent
+ * 日志文件并列的第二个文件。
+ */
+export interface LlmLogSink {
+  readonly write: (payload: unknown) => void;
+}
+
+/**
  * runAgentLoop 的入参。
  */
 export interface AgentLoopParams {
   /** 已生效的配置（apiKey/model/maxTokens/maxTurns 等）。 */
   readonly config: ResolvedConfig;
-  /** 用户初始 prompt（会被包成第一条 user message）。 */
+  /** 用户初始 prompt（会被包成最新一条 user message，追加到 initialMessages 之后）。 */
   readonly userPrompt: string;
+  /**
+   * 可选的历史对话 messages。
+   *
+   * 设计动机（M2 多轮 REPL）：chat 子命令在每一轮都要把"之前所有轮次的
+   * user/assistant/tool_result messages"前置到当前这轮 userPrompt 之前，
+   * 这样模型才能看到完整上下文。ask 单 shot 场景不传，行为与之前完全一致。
+   *
+   * 约束：调用方保证数组顺序已经是合法的对话序列（user→assistant→(tool_result user)→... 配对）。
+   * runAgentLoop 不做额外校验；错误序列会被 SDK 在请求阶段拒绝。
+   */
+  readonly initialMessages?: readonly NovaMessage[];
   /** 可选的 system prompt。缺省为 nova-code 的内置简短提示。 */
   readonly systemPrompt?: string;
   /** 可用工具集合。传空数组即关闭工具调用。 */
@@ -69,6 +95,15 @@ export interface AgentLoopParams {
    * 不传则按 config 创建真实客户端。
    */
   readonly client?: Anthropic;
+  /**
+   * 可选的 LLM 原始调用日志 sink。传入后每轮 LLM 调用会写入三类事件：
+   * - llm_request ：发请求前，写下完整 requestParams（model/max_tokens/system/messages/tools）
+   * - llm_response：流结束后，写下 SDK finalMessage + stop_reason + 耗时
+   * - llm_error   ：流异常或 finalMessage 异常时，写下错误信息 + 耗时
+   *
+   * 不传即不记录（ask/chat 未开 --debug 时的默认值）。
+   */
+  readonly llmLogSink?: LlmLogSink;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
@@ -93,8 +128,10 @@ export async function* runAgentLoop(
   const signal = params.signal ?? new AbortController().signal;
   const client = params.client ?? createAnthropicClient(config);
 
-  // 维护对话历史：第一条永远是用户初始 prompt
+  // 维护对话历史：先铺 initialMessages（多轮 REPL 的已有历史），再追加
+  // 本轮新的 user prompt。ask 单 shot 路径不传 initialMessages，效果与之前一致。
   const messages: NovaMessage[] = [
+    ...(params.initialMessages ?? []),
     {
       role: MessageRoleEnum.USER,
       content: userPrompt,
@@ -118,6 +155,8 @@ export async function* runAgentLoop(
       messages,
       sdkTools,
       signal,
+      turn,
+      llmLogSink: params.llmLogSink,
     });
 
     messages.push(assistantMessage);
@@ -180,6 +219,10 @@ interface StreamOneTurnParams {
   readonly messages: readonly NovaMessage[];
   readonly sdkTools: readonly SdkTool[];
   readonly signal: AbortSignal;
+  /** 当前轮次（从 1 开始），仅用于 llmLogSink 记录。 */
+  readonly turn: number;
+  /** 可选：记录原始请求/响应的 sink。 */
+  readonly llmLogSink?: LlmLogSink;
 }
 
 interface StreamOneTurnResult {
@@ -190,7 +233,7 @@ interface StreamOneTurnResult {
 async function* streamOneTurn(
   params: StreamOneTurnParams,
 ): AsyncGenerator<AgentEvent, StreamOneTurnResult, void> {
-  const { client, config, systemPrompt, messages, sdkTools, signal } = params;
+  const { client, config, systemPrompt, messages, sdkTools, signal, turn, llmLogSink } = params;
 
   // SDK 的 MessageStreamParams.tools 类型是 mutable ToolUnion[]，所以这里
   // 把 readonly 数组拷贝成 mutable 切片再传入。
@@ -202,6 +245,21 @@ async function* streamOneTurn(
     ...(sdkTools.length > 0 ? { tools: [...sdkTools] } : {}),
   };
 
+  // 向 llm 日志写请求；任何异常都不得阻断 LLM 调用（fail-safe）。
+  if (llmLogSink !== undefined) {
+    try {
+      llmLogSink.write({
+        kind: "llm_request",
+        turn,
+        model: config.model,
+        params: requestParams,
+      });
+    } catch {
+      // sink 内部已做降级；再抛无意义
+    }
+  }
+
+  const startedAt = Date.now();
   const stream = client.messages.stream(requestParams, { signal });
 
   // 流式消费：转发文本增量给调用方
@@ -216,6 +274,7 @@ async function* streamOneTurn(
       }
     }
   } catch (error) {
+    writeLlmError(llmLogSink, turn, Date.now() - startedAt, error);
     throw normalizeSdkError(error);
   }
 
@@ -224,13 +283,51 @@ async function* streamOneTurn(
   try {
     final = await stream.finalMessage();
   } catch (error) {
+    writeLlmError(llmLogSink, turn, Date.now() - startedAt, error);
     throw normalizeSdkError(error);
+  }
+
+  // 向 llm 日志写响应
+  if (llmLogSink !== undefined) {
+    try {
+      llmLogSink.write({
+        kind: "llm_response",
+        turn,
+        model: config.model,
+        stopReason: final.stop_reason,
+        durationMs: Date.now() - startedAt,
+        message: final,
+      });
+    } catch {
+      // ignore
+    }
   }
 
   return {
     assistantMessage: fromSdkMessage(final),
     stopReason: mapStopReason(final.stop_reason),
   };
+}
+
+function writeLlmError(
+  sink: LlmLogSink | undefined,
+  turn: number,
+  durationMs: number,
+  error: unknown,
+): void {
+  if (sink === undefined) return;
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : undefined;
+  try {
+    sink.write({
+      kind: "llm_error",
+      turn,
+      durationMs,
+      error: { name, message },
+    });
+  } catch {
+    // ignore
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

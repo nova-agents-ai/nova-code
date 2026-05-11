@@ -40,20 +40,14 @@ describe("BashTool · 基础", () => {
   });
 
   test("正常退出 0 → 输出含 stdout 与 [exit code: 0]", async () => {
-    const result = await BashTool.execute(
-      { command: "echo hello" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "echo hello" }, { signal: NOOP_SIGNAL });
     expect(result).toContain("$ echo hello");
     expect(result).toContain("hello");
     expect(result).toMatch(/\[exit code: 0\] \[duration: \d+ms\]/);
   });
 
   test("非 0 退出 → 不抛错，输出含 [exit code: <非0>]", async () => {
-    const result = await BashTool.execute(
-      { command: "exit 7" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "exit 7" }, { signal: NOOP_SIGNAL });
     expect(result).toMatch(/\[exit code: 7\] \[duration: \d+ms\]/);
   });
 
@@ -83,49 +77,35 @@ describe("BashTool · 入参校验", () => {
 
   test("timeout_ms 超过最大值 → ToolExecutionError", async () => {
     await expect(
-      BashTool.execute(
-        { command: "echo x", timeout_ms: 999_999_999 },
-        { signal: NOOP_SIGNAL },
-      ),
+      BashTool.execute({ command: "echo x", timeout_ms: 999_999_999 }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/exceeds maximum/);
   });
 
   test("timeout_ms 为 0 → ToolExecutionError", async () => {
     await expect(
-      BashTool.execute(
-        { command: "echo x", timeout_ms: 0 },
-        { signal: NOOP_SIGNAL },
-      ),
+      BashTool.execute({ command: "echo x", timeout_ms: 0 }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/positive finite number/);
   });
 });
 
 describe("BashTool · cwd 校验", () => {
   test("未传 cwd → 使用 process.cwd()", async () => {
-    const result = await BashTool.execute(
-      { command: "pwd" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "pwd" }, { signal: NOOP_SIGNAL });
     expect(result).toContain(process.cwd());
   });
 
   test("传入相对路径 → 解析为绝对路径", async () => {
-    const result = await BashTool.execute(
-      { command: "pwd", cwd: "." },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "pwd", cwd: "." }, { signal: NOOP_SIGNAL });
     expect(result).toContain(process.cwd());
   });
 
   test("传入绝对路径生效", async () => {
     const { dir, cleanup } = await makeTempDir();
     try {
-      const result = await BashTool.execute(
-        { command: "pwd", cwd: dir },
-        { signal: NOOP_SIGNAL },
-      );
+      const result = await BashTool.execute({ command: "pwd", cwd: dir }, { signal: NOOP_SIGNAL });
       // macOS 下 tmpdir 可能含 /private 前缀，不强制等值，仅断言 pwd 含 tmp dir 名
-      expect(result.toLowerCase()).toContain(dir.split("/").slice(-1)[0]!.toLowerCase());
+      const tmpDirName = dir.split("/").at(-1) ?? "";
+      expect(result.toLowerCase()).toContain(tmpDirName.toLowerCase());
     } finally {
       await cleanup();
     }
@@ -146,10 +126,7 @@ describe("BashTool · cwd 校验", () => {
       const filePath = join(dir, "not_a_dir.txt");
       await writeFile(filePath, "hi");
       await expect(
-        BashTool.execute(
-          { command: "pwd", cwd: filePath },
-          { signal: NOOP_SIGNAL },
-        ),
+        BashTool.execute({ command: "pwd", cwd: filePath }, { signal: NOOP_SIGNAL }),
       ).rejects.toThrow(/cwd is not a directory/);
     } finally {
       await cleanup();
@@ -158,10 +135,7 @@ describe("BashTool · cwd 校验", () => {
 
   test("cwd 类型错误（数字） → ToolExecutionError", async () => {
     await expect(
-      BashTool.execute(
-        { command: "pwd", cwd: 123 as unknown as string },
-        { signal: NOOP_SIGNAL },
-      ),
+      BashTool.execute({ command: "pwd", cwd: 123 as unknown as string }, { signal: NOOP_SIGNAL }),
     ).rejects.toThrow(/cwd must be a string/);
   });
 });
@@ -203,10 +177,7 @@ describe("BashTool · 安全过滤", () => {
   });
 
   test("软警告 非命中场景：普通 echo 不加 [warning] 前缀", async () => {
-    const result = await BashTool.execute(
-      { command: "echo plain text" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "echo plain text" }, { signal: NOOP_SIGNAL });
     expect(result.split("\n")[0]).toBe("$ echo plain text");
     expect(result).not.toContain("[warning]");
   });
@@ -214,28 +185,19 @@ describe("BashTool · 安全过滤", () => {
 
 describe("BashTool · 输出格式可解析性约束（v2.2 评审 · 架构 Issue #3）", () => {
   test("约束 1：尾行 [exit code: 0] [duration: Xms] 严格匹配", async () => {
-    const result = await BashTool.execute(
-      { command: "true" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "true" }, { signal: NOOP_SIGNAL });
     expect(result).toMatch(/^\[exit code: 0\] \[duration: \d+ms\]$/m);
   });
 
   test("约束 1：非 0 退出码可解析", async () => {
-    const result = await BashTool.execute(
-      { command: "exit 42" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "exit 42" }, { signal: NOOP_SIGNAL });
     const match = result.match(/\[exit code: (-?\d+)\] \[duration: (\d+)ms\]/);
     expect(match).not.toBeNull();
     expect(match?.[1]).toBe("42");
   });
 
   test("约束 2：首行 '$ <command>' 仅出现一次", async () => {
-    const result = await BashTool.execute(
-      { command: "echo a; echo b" },
-      { signal: NOOP_SIGNAL },
-    );
+    const result = await BashTool.execute({ command: "echo a; echo b" }, { signal: NOOP_SIGNAL });
     const dollarLines = result.split("\n").filter((l) => l.startsWith("$ "));
     expect(dollarLines.length).toBe(1);
     expect(dollarLines[0]).toBe("$ echo a; echo b");
@@ -245,16 +207,15 @@ describe("BashTool · 输出格式可解析性约束（v2.2 评审 · 架构 Iss
     // 输出 ~2 MB 内容，触发 1 MB 截断
     const result = await BashTool.execute(
       { command: "yes ABCDEFGHIJ | head -c 2000000" },
-      { signal: NOOP_SIGNAL, },
+      { signal: NOOP_SIGNAL },
     );
     expect(result).toMatch(/^\.\.\. \(truncated \d+ bytes\) \.\.\.$/m);
   });
 
   test("约束 4：软警告前缀严格匹配且仅出现一次", async () => {
-    const result = await BashTool.execute(
-      { command: "sudo true" },
-      { signal: NOOP_SIGNAL },
-    );
+    // 用 `echo` 把 `sudo` 当普通文本输出：命中 SOFT_WARN 的 sudo 正则，
+    // 但 shell 实际只执行 echo，不会弹密码提示导致 hang。
+    const result = await BashTool.execute({ command: "echo hello sudo" }, { signal: NOOP_SIGNAL });
     const warnLines = result.split("\n").filter((l) => l.startsWith("[warning]"));
     // 只命中 sudo 一条；这里允许 0-1 条 [warning]（如果 zombie warning 也出现则 ≤2，但本用例不触发 zombie）
     expect(warnLines.some((l) => /^\[warning\] command matched soft-warn patterns: /.test(l))).toBe(
@@ -304,17 +265,14 @@ describe("BashTool · abort", () => {
   test("启动前已 abort → AbortError", async () => {
     const ac = new AbortController();
     ac.abort();
-    await expect(
-      BashTool.execute({ command: "echo x" }, { signal: ac.signal }),
-    ).rejects.toThrow(AbortError);
+    await expect(BashTool.execute({ command: "echo x" }, { signal: ac.signal })).rejects.toThrow(
+      AbortError,
+    );
   });
 
   test("执行中 abort → AbortError", async () => {
     const ac = new AbortController();
-    const promise = BashTool.execute(
-      { command: "sleep 5" },
-      { signal: ac.signal },
-    );
+    const promise = BashTool.execute({ command: "sleep 5" }, { signal: ac.signal });
     setTimeout(() => ac.abort(), 50);
     await expect(promise).rejects.toThrow(AbortError);
   });

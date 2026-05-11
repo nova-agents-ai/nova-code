@@ -16,8 +16,8 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { Tool } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import {
   describeError,
   requireStringField,
@@ -47,8 +47,7 @@ export const FileWriteTool: Tool = {
     properties: {
       path: {
         type: "string",
-        description:
-          "Absolute or relative path for the new file. The file must NOT already exist.",
+        description: "Absolute or relative path for the new file. The file must NOT already exist.",
       },
       content: {
         type: "string",
