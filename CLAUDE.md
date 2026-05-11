@@ -69,7 +69,7 @@ tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，e
 
 `cli.ts` 的职责仅限于：参数解析、`--help` / `--version`、命令查找、统一异常兜底。**不要**在 `cli.ts` 里写业务逻辑。
 
-## 6. 提交前校验（必跑）
+## 6. 提交前以及每一次代码改动后校验（必跑）
 
 ```bash
 bun run typecheck          # tsc --noEmit

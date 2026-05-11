@@ -218,4 +218,22 @@ describe("buildDebugLogFileName", () => {
     expect(withoutSession).toBe("ask-2026-05-01T15-11-23-42649.log");
     expect(withUndefined).toBe(withoutSession);
   });
+
+  test('传 prefix="chat" 时文件名以 chat- 开头（M2 chat REPL）', () => {
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const name = buildDebugLogFileName(fixedDate, 42649, "sess-abc123", "chat");
+    expect(name).toBe("chat-2026-05-01T15-11-23-sess-abc123.log");
+  });
+
+  test('prefix 默认值仍是 "ask"（显式传 undefined 等价不传）', () => {
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const defaulted = buildDebugLogFileName(fixedDate, 42649, undefined, undefined);
+    expect(defaulted).toBe("ask-2026-05-01T15-11-23-42649.log");
+  });
+
+  test("只传 prefix 不传 sessionId：文件名仍以 pid 收尾", () => {
+    const fixedDate = new Date(2026, 4, 1, 15, 11, 23);
+    const name = buildDebugLogFileName(fixedDate, 42649, undefined, "chat");
+    expect(name).toBe("chat-2026-05-01T15-11-23-42649.log");
+  });
 });

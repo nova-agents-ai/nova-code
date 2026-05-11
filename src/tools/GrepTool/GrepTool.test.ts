@@ -24,10 +24,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { ToolExecutionContext } from "../../Tool.ts";
 import { GREP_MAX_LINE_BYTES, GREP_MAX_MATCHES } from "../utils.ts";
-import { GrepTool, _resetRipgrepCache } from "./GrepTool.ts";
+import { _resetRipgrepCache, GrepTool } from "./GrepTool.ts";
 
 // ============== Helpers ==============
 
@@ -67,29 +67,24 @@ describe("GrepTool · meta", () => {
 
 describe("GrepTool · input validation", () => {
   it("rejects missing pattern", async () => {
-    await expect(GrepTool.execute({}, makeContext())).rejects.toBeInstanceOf(
+    await expect(GrepTool.execute({}, makeContext())).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("rejects non-string pattern", async () => {
+    await expect(GrepTool.execute({ pattern: 123 }, makeContext())).rejects.toBeInstanceOf(
       ToolExecutionError,
     );
   });
 
-  it("rejects non-string pattern", async () => {
-    await expect(
-      GrepTool.execute({ pattern: 123 }, makeContext()),
-    ).rejects.toBeInstanceOf(ToolExecutionError);
-  });
-
   it("rejects empty pattern (treated as missing)", async () => {
-    await expect(
-      GrepTool.execute({ pattern: "" }, makeContext()),
-    ).rejects.toBeInstanceOf(ToolExecutionError);
+    await expect(GrepTool.execute({ pattern: "" }, makeContext())).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
   });
 
   it("rejects non-boolean case_sensitive", async () => {
     await expect(
-      GrepTool.execute(
-        { pattern: "x", case_sensitive: "yes" },
-        makeContext(),
-      ),
+      GrepTool.execute({ pattern: "x", case_sensitive: "yes" }, makeContext()),
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
@@ -106,17 +101,14 @@ describe("GrepTool · input validation", () => {
   });
 
   it("rejects non-string path", async () => {
-    await expect(
-      GrepTool.execute({ pattern: "x", path: 1 }, makeContext()),
-    ).rejects.toBeInstanceOf(ToolExecutionError);
+    await expect(GrepTool.execute({ pattern: "x", path: 1 }, makeContext())).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
   });
 
   it("rejects path that does not exist", async () => {
     await expect(
-      GrepTool.execute(
-        { pattern: "x", path: join(workDir, "no-such-dir") },
-        makeContext(),
-      ),
+      GrepTool.execute({ pattern: "x", path: join(workDir, "no-such-dir") }, makeContext()),
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
@@ -130,10 +122,7 @@ describe("GrepTool · input validation", () => {
 
   it("rejects invalid regex syntax", async () => {
     await expect(
-      GrepTool.execute(
-        { pattern: "(unclosed", path: workDir },
-        makeContext(),
-      ),
+      GrepTool.execute({ pattern: "(unclosed", path: workDir }, makeContext()),
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 });
@@ -146,10 +135,7 @@ describe("GrepTool · basic search", () => {
     await writeFile(join(workDir, "b.ts"), "// not a match\nTODO: bar\n");
     await writeFile(join(workDir, "c.md"), "no match here\n");
 
-    const result = await GrepTool.execute(
-      { pattern: "TODO", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "TODO", path: workDir }, makeContext());
     expect(result).toContain("a.ts:1: TODO: foo");
     expect(result).toContain("b.ts:2: TODO: bar");
     expect(result).not.toContain("c.md");
@@ -168,10 +154,7 @@ describe("GrepTool · basic search", () => {
 
   it("respects case_sensitive=false (default)", async () => {
     await writeFile(join(workDir, "a.ts"), "Hello World\n");
-    const result = await GrepTool.execute(
-      { pattern: "hello", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "hello", path: workDir }, makeContext());
     expect(result).toContain("a.ts:1: Hello World");
   });
 
@@ -189,10 +172,7 @@ describe("GrepTool · basic search", () => {
       join(workDir, "a.ts"),
       ["line 1", "TARGET", "line 3", "TARGET again"].join("\n"),
     );
-    const result = await GrepTool.execute(
-      { pattern: "TARGET", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "TARGET", path: workDir }, makeContext());
     expect(result).toContain("a.ts:2: TARGET");
     expect(result).toContain("a.ts:4: TARGET again");
   });
@@ -208,10 +188,7 @@ describe("GrepTool · blacklist directories", () => {
     await writeFile(join(workDir, "node_modules", "pkg", "x.js"), "MATCH\n");
     await writeFile(join(workDir, "src.ts"), "MATCH\n");
 
-    const result = await GrepTool.execute(
-      { pattern: "MATCH", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "MATCH", path: workDir }, makeContext());
     expect(result).toContain("src.ts:1: MATCH");
     expect(result).not.toContain(".git");
     expect(result).not.toContain("node_modules");
@@ -221,10 +198,7 @@ describe("GrepTool · blacklist directories", () => {
     // 段精确匹配 —— "my-node_modules" 不应被跳过
     await mkdir(join(workDir, "my-node_modules"), { recursive: true });
     await writeFile(join(workDir, "my-node_modules", "x.ts"), "MATCH\n");
-    const result = await GrepTool.execute(
-      { pattern: "MATCH", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "MATCH", path: workDir }, makeContext());
     expect(result).toContain("my-node_modules/x.ts:1: MATCH");
   });
 });
@@ -279,10 +253,7 @@ describe("GrepTool · truncation", () => {
     for (let i = 0; i < totalLines; i += 1) lines.push(`MATCH line ${i}`);
     await writeFile(join(workDir, "big.txt"), lines.join("\n"));
 
-    const result = await GrepTool.execute(
-      { pattern: "MATCH", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "MATCH", path: workDir }, makeContext());
     // 计算结果中有多少行匹配
     const matchLines = result.split("\n").filter((l) => l.startsWith("big.txt:"));
     expect(matchLines.length).toBe(GREP_MAX_MATCHES);
@@ -290,17 +261,18 @@ describe("GrepTool · truncation", () => {
   });
 
   it("truncates a single very long line", async () => {
-    const longContent = "MATCH" + "x".repeat(GREP_MAX_LINE_BYTES + 100);
+    const longContent = `MATCH${"x".repeat(GREP_MAX_LINE_BYTES + 100)}`;
     await writeFile(join(workDir, "long.txt"), longContent);
 
-    const result = await GrepTool.execute(
-      { pattern: "MATCH", path: workDir },
-      makeContext(),
-    );
-    expect(result).toContain("[line truncated]");
+    const result = await GrepTool.execute({ pattern: "MATCH", path: workDir }, makeContext());
+    // 两条可能的截断标记：
+    //   - fallback 路径：`[line truncated]`
+    //   - ripgrep 路径：`[Omitted long matching line]`（rg 默认 --max-columns）
+    expect(result).toMatch(/\[line truncated\]|\[Omitted long matching line\]/);
     // 单行实际字节数应 <= GREP_MAX_LINE_BYTES + 后缀长度
-    const matchLine = result.split("\n").find((l) => l.startsWith("long.txt:"))!;
-    expect(matchLine.length).toBeLessThan(GREP_MAX_LINE_BYTES + 200);
+    const matchLine = result.split("\n").find((l) => l.startsWith("long.txt:"));
+    expect(matchLine).toBeDefined();
+    expect(matchLine?.length ?? 0).toBeLessThan(GREP_MAX_LINE_BYTES + 200);
   });
 });
 
@@ -311,10 +283,7 @@ describe("GrepTool · skip non-text files (fallback path)", () => {
     // utf8 文本含 \0 即视为二进制
     await writeFile(join(workDir, "bin.dat"), "MATCH\u0000more");
     await writeFile(join(workDir, "txt.txt"), "MATCH ok\n");
-    const result = await GrepTool.execute(
-      { pattern: "MATCH", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "MATCH", path: workDir }, makeContext());
     expect(result).toContain("txt.txt");
     expect(result).not.toContain("bin.dat");
   });
@@ -368,10 +337,7 @@ describe("GrepTool · ripgrep cache reset hook", () => {
 describe("GrepTool · output format", () => {
   it("each match line conforms to '<relpath>:<lineno>: <content>'", async () => {
     await writeFile(join(workDir, "a.ts"), "FOO\nFOO\n");
-    const result = await GrepTool.execute(
-      { pattern: "FOO", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "FOO", path: workDir }, makeContext());
     const matchLines = result.split("\n").filter((l) => l.startsWith("a.ts:"));
     expect(matchLines.length).toBe(2);
     for (const line of matchLines) {
@@ -382,10 +348,7 @@ describe("GrepTool · output format", () => {
 
   it("singular vs plural in summary", async () => {
     await writeFile(join(workDir, "a.ts"), "FOO\n");
-    const result = await GrepTool.execute(
-      { pattern: "FOO", path: workDir },
-      makeContext(),
-    );
+    const result = await GrepTool.execute({ pattern: "FOO", path: workDir }, makeContext());
     expect(result).toMatch(/\[1 match in 1 file\]/);
   });
 });

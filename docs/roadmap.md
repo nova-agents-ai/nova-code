@@ -161,6 +161,7 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 
 - 完整 e2e 套件覆盖 M1-M6 主路径
 - 性能 baseline（启动时间 / 单工具调用延迟）
+- **sessionId 对齐**：`generateSessionId` 统一切换为 `randomUUID()`（UUID v4），对齐 claude-code（§7.0）。现实现的 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` 是 M2 历史偏离；新旧会话文件可并存（`assertSafeFileName` 只校验路径穿越，UUID v4 合法）。顺带更新 `sessionId.test.ts` 断言与 `docs/manual/M2-usage-guide.md` 示例。
 - 发布 **v0.5.0 — Daily Driver**：作者本人完全脱离 claude-code 自用 1 个月
 
 **Phase 1 退出标准**：自用 1 个月，记录所有"想要但没有"的 claude-code 功能 → 作为 Phase 2 的优先级输入。
@@ -390,6 +391,7 @@ Phase 3 不预设具体顺序。
 | `src/llm/query.ts` | `src/QueryEngine.ts`（`src/query.ts` 是另一个文件） | M1.5 重命名（与 retry/transport 抽取一起） |
 | `src/llm/` 命名空间整体 | claude-code 无 `llm/` 子命名空间，所有都在 `src/` 顶层 | M1.5 完成后 `src/llm/` 应消失 |
 | `src/cli.ts`（自创） | claude-code 是 `src/main.tsx` + `src/cli/` 目录（含子模块） | M1.5 / M2 阶段对齐 |
+| `sessionId` 用 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` | claude-code 统一 `randomUUID()`（UUID v4） | M6.5 切换为 `randomUUID()`（波及面小，历史文件可并存） |
 
 > 这些偏离是 M0 早期没有此原则时的产物。**M1 实施时必须同步修复**，不再扩大。
 

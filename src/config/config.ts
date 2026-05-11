@@ -37,6 +37,9 @@ const CONFIG_FILE_NAME = "config.json";
 /** 日志文件存放的子目录名（位于 ~/.nova-code 下）。 */
 const LOGS_DIR_NAME = "logs";
 
+/** 会话持久化（JSONL）存放的子目录名，M2 chat REPL 新增。 */
+const SESSIONS_DIR_NAME = "sessions";
+
 /** 环境变量名。统一使用 NOVA_ 前缀。 */
 const ENV_API_KEY = "NOVA_API_KEY";
 const ENV_BASE_URL = "NOVA_BASE_URL";
@@ -87,6 +90,19 @@ export function getConfigFilePath(source: ConfigSource = {}): string {
 export function getLogsDirPath(source: ConfigSource = {}): string {
   const home = source.homeDir ?? homedir();
   return join(home, CONFIG_DIR_NAME, LOGS_DIR_NAME);
+}
+
+/**
+ * 计算会话持久化目录的绝对路径（~/.nova-code/sessions）。
+ *
+ * 与 [getLogsDirPath](file:///Users/dinglevin/code/levin-github/nova-code/src/config/config.ts) 保持对称的套路：只返回路径、不 mkdir，
+ * 让调用方（sessionStore）自行在写入前保证目录存在。
+ *
+ * M2 chat REPL 的 /save /load 用这个目录存放 `<sessionId>.jsonl`。
+ */
+export function getSessionsDirPath(source: ConfigSource = {}): string {
+  const home = source.homeDir ?? homedir();
+  return join(home, CONFIG_DIR_NAME, SESSIONS_DIR_NAME);
 }
 
 /**

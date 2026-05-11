@@ -43,6 +43,12 @@ export interface CreateFileDebugSinkOptions {
    * 预埋在这里而非沿用 pid 是因为 M2 时点再扩签名会引连锁改动；提前接口化成本极小。
    */
   readonly sessionId?: string;
+  /**
+   * 日志文件名前缀，默认 `"ask"`。M2 chat REPL 传 `"chat"` 区分两种入口的历史日志。
+   *
+   * ask 路径不传 → 文件名形态维持不变（现有单测全部继续通过）。
+   */
+  readonly prefix?: string;
 }
 
 /**
@@ -50,7 +56,12 @@ export interface CreateFileDebugSinkOptions {
  */
 export function createFileDebugSink(options: CreateFileDebugSinkOptions): DebugSink {
   const logsDir = getLogsDirPath();
-  const fileName = buildDebugLogFileName(new Date(), process.pid, options.sessionId);
+  const fileName = buildDebugLogFileName(
+    new Date(),
+    process.pid,
+    options.sessionId,
+    options.prefix,
+  );
   const filePath = join(logsDir, fileName);
 
   let fd: number;
@@ -142,18 +153,25 @@ export function formatDebugPayload(payload: unknown, pretty: boolean): string {
 
 /**
  * 构造日志文件名：
- *   - 未传 sessionId：`ask-YYYY-MM-DDTHH-mm-ss-<pid>.log`（M1.5 默认）
- *   - 传了 sessionId：`ask-YYYY-MM-DDTHH-mm-ss-<sessionId>.log`（M2 chat REPL 预留）
+ *   - 未传 sessionId：`<prefix>-YYYY-MM-DDTHH-mm-ss-<pid>.log`（M1.5 默认）
+ *   - 传了 sessionId：`<prefix>-YYYY-MM-DDTHH-mm-ss-<sessionId>.log`（M2 chat REPL）
  *
- * 形如 ask-2026-05-01T15-11-23-42649.log，按字典序就是时序，便于排序定位。
+ * `prefix` 默认 `"ask"`；M2 chat 传 `"chat"` 后文件名形如 chat-2026-05-04T...-<sid>.log。
+ *
+ * 按字典序即是时序，便于 ls -lt 排序定位。
  *
  * 抽成纯函数是为了可单测——内部 new Date() 不便注入。
  */
-export function buildDebugLogFileName(now: Date, pid: number, sessionId?: string): string {
+export function buildDebugLogFileName(
+  now: Date,
+  pid: number,
+  sessionId?: string,
+  prefix: string = "ask",
+): string {
   const pad2 = (n: number): string => n.toString().padStart(2, "0");
   const ts =
     `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
     `T${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
   const suffix = sessionId ?? String(pid);
-  return `ask-${ts}-${suffix}.log`;
+  return `${prefix}-${ts}-${suffix}.log`;
 }

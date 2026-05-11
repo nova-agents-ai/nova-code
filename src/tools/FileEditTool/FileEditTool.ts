@@ -18,11 +18,10 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { rename, stat, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
-import type { Tool } from "../../Tool.ts";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import {
   describeError,
   EDIT_MAX_FILE_BYTES,
@@ -101,10 +100,7 @@ export const FileEditTool: Tool = {
     }
 
     if (!info.isFile()) {
-      throw new ToolExecutionError(
-        TOOL_NAME,
-        `path is not a regular file: ${sanitized}.`,
-      );
+      throw new ToolExecutionError(TOOL_NAME, `path is not a regular file: ${sanitized}.`);
     }
 
     // d. 文件超大
@@ -176,10 +172,7 @@ export const FileEditTool: Tool = {
 // ---------------- helpers ----------------
 
 /** 读取允许空字符串的字符串字段；非字符串抛错。 */
-function readStringInput(
-  input: Readonly<Record<string, unknown>>,
-  field: string,
-): string {
+function readStringInput(input: Readonly<Record<string, unknown>>, field: string): string {
   const value = input[field];
   if (typeof value !== "string") {
     throw new ToolExecutionError(
@@ -191,10 +184,7 @@ function readStringInput(
 }
 
 /** 读取可选 boolean 字段；缺失或 undefined 视为 false；其他类型抛错。 */
-function readBoolInput(
-  input: Readonly<Record<string, unknown>>,
-  field: string,
-): boolean {
+function readBoolInput(input: Readonly<Record<string, unknown>>, field: string): boolean {
   const value = input[field];
   if (value === undefined || value === null) return false;
   if (typeof value !== "boolean") {
@@ -296,9 +286,17 @@ function buildHunks(
   // 2. 内容以 \n 结尾 → 末尾多出一个空字符串元素，剔除
   // 3. 否则末尾元素是真实的"无尾换行"行
   const trueLastIdxOriginal =
-    original === "" ? -1 : original.endsWith("\n") ? originalLines.length - 2 : originalLines.length - 1;
+    original === ""
+      ? -1
+      : original.endsWith("\n")
+        ? originalLines.length - 2
+        : originalLines.length - 1;
   const trueLastIdxUpdated =
-    updated === "" ? -1 : updated.endsWith("\n") ? updatedLines.length - 2 : updatedLines.length - 1;
+    updated === ""
+      ? -1
+      : updated.endsWith("\n")
+        ? updatedLines.length - 2
+        : updatedLines.length - 1;
 
   // 1. 每个 match 计算覆盖行范围 + 在 updated 中对应的"行偏移"
   interface MatchRange {
@@ -328,8 +326,7 @@ function buildHunks(
     endMatchIdx: number;
   }
   const groups: MatchGroup[] = [];
-  for (let i = 0; i < ranges.length; i += 1) {
-    const r = ranges[i]!;
+  for (const [i, r] of ranges.entries()) {
     const last = groups[groups.length - 1];
     if (last && r.firstLineIdx <= last.lastLineIdx + 1) {
       // 相邻或重叠 → 合并到上一组
@@ -356,8 +353,7 @@ function buildHunks(
 
     // updated 中对应的"行块"起点 = 原起点 + 之前所有已应用匹配的累计行数变化
     // group.startMatchIdx 之前的所有匹配已经在 updated 中应用过
-    const updatedFirstLineIdx =
-      group.firstLineIdx + group.startMatchIdx * linesDeltaPerMatch;
+    const updatedFirstLineIdx = group.firstLineIdx + group.startMatchIdx * linesDeltaPerMatch;
     // updated 中对应行块的"行数" = removedLines.length + 本组内匹配数 * linesDelta
     const matchesInGroup = group.endMatchIdx - group.startMatchIdx;
     const updatedLineCount = removedLines.length + matchesInGroup * linesDeltaPerMatch;
@@ -370,10 +366,7 @@ function buildHunks(
 
     // context（基于 original）
     const ctxStartIdx = Math.max(0, group.firstLineIdx - CONTEXT_LINES);
-    const ctxEndIdx = Math.min(
-      trueLastIdxOriginal,
-      group.lastLineIdx + CONTEXT_LINES,
-    );
+    const ctxEndIdx = Math.min(trueLastIdxOriginal, group.lastLineIdx + CONTEXT_LINES);
     const beforeContext = sliceLines(originalLines, ctxStartIdx, group.firstLineIdx - 1);
     const afterContext = sliceLines(originalLines, group.lastLineIdx + 1, ctxEndIdx);
 
@@ -392,16 +385,12 @@ function buildHunks(
  * - from > to 或越界 → 返回空数组
  * - from < 0 截到 0
  */
-function sliceLines(
-  lines: readonly string[],
-  from: number,
-  to: number,
-): readonly string[] {
+function sliceLines(lines: readonly string[], from: number, to: number): readonly string[] {
   if (from > to) return [];
-  if (from < 0) from = 0;
-  if (to >= lines.length) to = lines.length - 1;
-  if (from > to) return [];
-  return lines.slice(from, to + 1);
+  const start = from < 0 ? 0 : from;
+  const end = to >= lines.length ? lines.length - 1 : to;
+  if (start > end) return [];
+  return lines.slice(start, end + 1);
 }
 
 /** 统计 [0, offset) 区间内的 \n 字符数（即 offset 所在的 0-indexed 行号）。 */
@@ -451,11 +440,7 @@ function formatDiffSection(
  * @param content 要写入的新内容
  * @param sanitized 用于错误消息的脱敏路径
  */
-async function atomicWrite(
-  absolute: string,
-  content: string,
-  sanitized: string,
-): Promise<void> {
+async function atomicWrite(absolute: string, content: string, sanitized: string): Promise<void> {
   const random = randomBytes(3).toString("hex"); // 6 hex chars
   const tmpPath = `${absolute}.${process.pid}.${random}.tmp`;
 

@@ -7,8 +7,8 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import type { Tool } from "../../Tool.ts";
 import { ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import { describeError, MAX_FILE_BYTES, requireStringField } from "../utils.ts";
 
 const TOOL_NAME = "FileRead";

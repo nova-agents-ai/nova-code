@@ -10,8 +10,8 @@
 
 import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import type { Tool } from "../../Tool.ts";
 import { ToolExecutionError } from "../../errors/index.ts";
+import type { Tool } from "../../Tool.ts";
 import { describeError, MAX_DIR_ENTRIES, requireStringField } from "../utils.ts";
 
 const TOOL_NAME = "LS";

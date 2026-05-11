@@ -21,7 +21,7 @@ import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError } from "./errors/index.ts";
 import { runAgentLoop } from "./QueryEngine.ts";
 import type { Tool } from "./Tool.ts";
-import { type AgentEvent, AgentStopReasonEnum } from "./types/message.ts";
+import { type AgentEvent, AgentStopReasonEnum, MessageRoleEnum } from "./types/message.ts";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fake SDK Client
@@ -42,6 +42,8 @@ interface FakeStreamCall {
   readonly model: string;
   readonly hasTools: boolean;
   readonly messageCount: number;
+  /** 完整的 messages body（按 SDK 期望的 shape），用于断言历史消息前置正确。 */
+  readonly messages: readonly unknown[];
 }
 
 interface FakeClientHandle {
@@ -74,6 +76,7 @@ function makeFakeClient(turns: readonly ScriptedTurn[]): FakeClientHandle {
           model: body.model,
           hasTools: body.tools !== undefined && body.tools.length > 0,
           messageCount: body.messages.length,
+          messages: body.messages,
         });
         return makeFakeStream(turn);
       },
@@ -460,6 +463,99 @@ describe("runAgentLoop - 终止条件", () => {
   });
 });
 
+describe("runAgentLoop - initialMessages（多轮 REPL 支持）", () => {
+  test("不传 initialMessages：messages 只包含当前 userPrompt（向后兼容）", async () => {
+    const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hello",
+        tools: [],
+        client,
+      }),
+    );
+    expect(calls[0]?.messageCount).toBe(1);
+    expect(calls[0]?.messages).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  test("传 initialMessages：历史消息被完整前置到请求 messages，userPrompt 追加在末尾", async () => {
+    const { client, calls } = makeFakeClient([
+      { textChunks: ["acknowledged"], stopReason: "end_turn" },
+    ]);
+
+    // 构造一段「上一轮 user + assistant」的历史，模拟多轮 REPL 第二轮的入参
+    const history = [
+      { role: MessageRoleEnum.USER, content: "first question" },
+      {
+        role: MessageRoleEnum.ASSISTANT,
+        content: [{ type: "text", text: "first answer" } as const],
+      },
+    ] as const;
+
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "follow up",
+        initialMessages: history,
+        tools: [],
+        client,
+      }),
+    );
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.messageCount).toBe(3);
+    // 顺序必须是：[历史 user, 历史 assistant, 新 userPrompt]
+    expect(calls[0]?.messages).toEqual([
+      { role: "user", content: "first question" },
+      { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      { role: "user", content: "follow up" },
+    ]);
+  });
+
+  test("initialMessages + tool_use 循环：第二轮 SDK 调用仍包含历史前缀", async () => {
+    const { client, calls } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "echo", input: { message: "x" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const history = [
+      { role: MessageRoleEnum.USER, content: "earlier turn" },
+      {
+        role: MessageRoleEnum.ASSISTANT,
+        content: [{ type: "text", text: "earlier reply" } as const],
+      },
+    ] as const;
+
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "now use echo",
+        initialMessages: history,
+        tools: [makeEchoTool()],
+        client,
+      }),
+    );
+
+    expect(calls.length).toBe(2);
+    // 第一轮：[历史 user, 历史 assistant, 新 user]
+    expect(calls[0]?.messageCount).toBe(3);
+    // 第二轮：第一轮基础上追加 [assistant(tool_use), user(tool_result)] → 共 5
+    expect(calls[1]?.messageCount).toBe(5);
+    // 前两条仍是历史（防止实现里把 initialMessages 错当成「只用一轮」）
+    const secondCallMessages = calls[1]?.messages;
+    expect(secondCallMessages?.[0]).toEqual({ role: "user", content: "earlier turn" });
+    expect(secondCallMessages?.[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "earlier reply" }],
+    });
+    expect(secondCallMessages?.[2]).toEqual({ role: "user", content: "now use echo" });
+  });
+});
+
 describe("runAgentLoop - SDK 入参组装", () => {
   test("无工具时不传 tools 字段", async () => {
     const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
@@ -498,5 +594,96 @@ describe("runAgentLoop - SDK 入参组装", () => {
       }),
     );
     expect(calls[0]?.model).toBe("claude-haiku-9000");
+  });
+});
+
+describe("runAgentLoop - llmLogSink", () => {
+  test("每轮 LLM 调用都写入 llm_request 和 llm_response", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "echo", input: { message: "x" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const records: Array<Record<string, unknown>> = [];
+    const sink = {
+      write: (payload: unknown) => {
+        records.push(payload as Record<string, unknown>);
+      },
+    };
+
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "go",
+        tools: [makeEchoTool()],
+        client,
+        llmLogSink: sink,
+      }),
+    );
+
+    // 两轮 LLM 调用 → 2 条 request + 2 条 response
+    const kinds = records.map((r) => r["kind"]);
+    expect(kinds).toEqual(["llm_request", "llm_response", "llm_request", "llm_response"]);
+
+    // 请求字段：turn / model / params.messages 齐全
+    const firstReq = records[0];
+    expect(firstReq?.["turn"]).toBe(1);
+    expect(firstReq?.["model"]).toBe(baseConfig.model);
+    const params = firstReq?.["params"] as { messages: unknown[]; tools?: unknown[] };
+    expect(Array.isArray(params.messages)).toBe(true);
+    expect(params.messages.length).toBe(1);
+    expect(Array.isArray(params.tools)).toBe(true);
+
+    // 响应字段：stopReason / durationMs / message 齐全
+    const firstResp = records[1];
+    expect(firstResp?.["turn"]).toBe(1);
+    expect(firstResp?.["stopReason"]).toBe("tool_use");
+    expect(typeof firstResp?.["durationMs"]).toBe("number");
+    expect(firstResp?.["message"]).toBeDefined();
+
+    // 第二轮 turn 递增
+    expect(records[2]?.["turn"]).toBe(2);
+    expect(records[3]?.["turn"]).toBe(2);
+    expect(records[3]?.["stopReason"]).toBe("end_turn");
+  });
+
+  test("不传 llmLogSink：零调用（向后兼容）", async () => {
+    // 既然不传 sink，只要 loop 正常跑完不抛就算通过——用 Fake client 调用次数作 smoke 断言
+    const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [],
+        client,
+      }),
+    );
+    expect(calls.length).toBe(1);
+  });
+
+  test("sink.write 抛错不阻断 LLM 调用", async () => {
+    const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
+    const sink = {
+      write: () => {
+        throw new Error("sink broken");
+      },
+    };
+
+    // 期望 runAgentLoop 正常结束（fail-safe），而不是把 sink 的错误冒上来
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [],
+        client,
+        llmLogSink: sink,
+      }),
+    );
+    expect(calls.length).toBe(1);
+    expect(events[events.length - 1]?.type).toBe("done");
   });
 });

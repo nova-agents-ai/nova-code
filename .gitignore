@@ -116,3 +116,4 @@ dist
 claude-code/
 .DS_Store
 .idea/
+.qoder
