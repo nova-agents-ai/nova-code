@@ -1,6 +1,6 @@
 {
   "name": "nova-code",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "一个全新的 Code Agent CLI",
   "type": "module",
   "license": "GPL-3.0-or-later",
@@ -70,6 +70,7 @@
     "format:check": "biome format .",
     "check": "biome check .",
     "check:fix": "biome check --write .",
+    "release:tag": "bun run scripts/release-tag.ts",
     "prepublishOnly": "bun run typecheck && bun run check && bun test && bun run build:lib"
   },
   "devDependencies": {

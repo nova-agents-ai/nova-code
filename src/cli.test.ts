@@ -255,86 +255,55 @@ describe("runCli - hello 命令", () => {
   });
 });
 
-describe("runCli - echo 命令", () => {
-  test("echo 无参数时返回 1 并打印错误", async () => {
-    const exitCode = await runCli({ argv: ["echo"] });
-
-    expect(exitCode).toBe(1);
-    expect(spies.errorOutput()).toContain("echo: 至少需要一个参数");
-    expect(spies.log).not.toHaveBeenCalled();
-  });
-
-  test("echo 单个参数原样返回", async () => {
-    const exitCode = await runCli({ argv: ["echo", "hello"] });
-
-    expect(exitCode).toBe(0);
-    expect(spies.output()).toBe("hello");
-  });
-
-  test("echo 多个参数用空格连接", async () => {
-    const exitCode = await runCli({ argv: ["echo", "a", "b", "c"] });
-
-    expect(exitCode).toBe(0);
-    expect(spies.output()).toBe("a b c");
-  });
-
-  test("echo 保留空字符串参数", async () => {
-    const exitCode = await runCli({ argv: ["echo", "x", "", "y"] });
-
-    expect(exitCode).toBe(0);
-    expect(spies.output()).toBe("x  y");
-  });
-});
-
 describe("runCli - 命令异常兜底", () => {
   test("命令 run 抛出 Error 时返回 1 并打印错误信息", async () => {
     // 不通过模块 mock 重写 commands.ts（那种做法依赖 Bun 模块缓存的隐式行为，不可靠）。
     // 改为在内置命令上注入一个临时会抛错的 run，测完恢复。
-    // builtinCommands 是 readonly 引用，但其元素 run 是可写函数引用——这里替换 echo 的 run，
+    // builtinCommands 是 readonly 引用，但其元素 run 是可写函数引用——这里替换 hello 的 run，
     // 让它在收到特定哨兵参数时抛错，验证 cli.ts 的 try/catch 兜底。
-    const echo = findCommand("echo");
-    expect(echo).toBeDefined();
-    if (!echo) return;
+    const hello = findCommand("hello");
+    expect(hello).toBeDefined();
+    if (!hello) return;
 
-    const originalRun = echo.run;
+    const originalRun = hello.run;
     const sentinelError = new Error("故意炸：单元测试触发");
 
     // 类型上 run 是 readonly，这里通过类型断言绕开仅为测试用途。
-    (echo as { run: typeof echo.run }).run = () => {
+    (hello as { run: typeof hello.run }).run = () => {
       throw sentinelError;
     };
 
     try {
-      const exitCode = await runCli({ argv: ["echo", "trigger"] });
+      const exitCode = await runCli({ argv: ["hello", "trigger"] });
       expect(exitCode).toBe(1);
       expect(spies.errorOutput()).toContain("故意炸：单元测试触发");
-      expect(spies.errorOutput()).toContain("echo");
+      expect(spies.errorOutput()).toContain("hello");
     } finally {
-      (echo as { run: typeof echo.run }).run = originalRun;
+      (hello as { run: typeof hello.run }).run = originalRun;
     }
   });
 
   test("命令 run 抛出非 Error 值时也能转成字符串并返回 1", async () => {
-    const echo = findCommand("echo");
-    expect(echo).toBeDefined();
-    if (!echo) return;
+    const hello = findCommand("hello");
+    expect(hello).toBeDefined();
+    if (!hello) return;
 
-    const originalRun = echo.run;
+    const originalRun = hello.run;
     // 抛一个普通对象（非 Error 实例），覆盖 cli.ts 中 String(error) 的兜底分支。
     // 该对象自带 toString 让结果可读，避免出现 "[object Object]" 之类无意义的输出。
     const nonErrorThrowable = {
       toString: () => "非Error错误对象",
     };
-    (echo as { run: typeof echo.run }).run = () => {
+    (hello as { run: typeof hello.run }).run = () => {
       throw nonErrorThrowable;
     };
 
     try {
-      const exitCode = await runCli({ argv: ["echo", "trigger"] });
+      const exitCode = await runCli({ argv: ["hello", "trigger"] });
       expect(exitCode).toBe(1);
       expect(spies.errorOutput()).toContain("非Error错误对象");
     } finally {
-      (echo as { run: typeof echo.run }).run = originalRun;
+      (hello as { run: typeof hello.run }).run = originalRun;
     }
   });
 });

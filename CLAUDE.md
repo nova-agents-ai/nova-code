@@ -8,7 +8,7 @@
 ## 1. 项目定位
 
 - 一个基于 **Bun + TypeScript** 的 CLI 程序，命名 `nova-code`，目标是做一个 Code Agent。
-- 当前阶段：**最小骨架**——参数解析 + 命令分发 + 几个示例命令（`hello` / `echo` / `ask`）。
+- 当前阶段：**最小骨架**——参数解析 + 命令分发 + 几个示例命令（`hello` / `ask` / `chat`）。
 - 仓库内的 `claude-code/` 目录是**外部参考代码**（在 `.gitignore` 中且 `tsconfig.json` `exclude` 中），**禁止**修改、禁止 import、不计入 typecheck 范围。
 
 ## 2. 目录约定

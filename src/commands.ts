@@ -4,8 +4,8 @@
  * 与 claude-code 的同名文件保持一致的模式：具体命令实现按目录下沉到 src/commands/，
  * 本文件只负责"把它们串起来 + 提供 findCommand 查询"。
  *
- * 历史上这里装着 hello/echo/ask 三个命令的完整实现（含 debug sink、flag 解析等），
- * M1.5 阶段按主题拆成了子目录；对外导出的公共 API 保持不变：
+ * 历史上这里装着 hello/ask 命令的完整实现（含 debug sink、flag 解析等），
+ * M1.5 阶段按主题拆成了子目录；后期追加 chat 命令。对外导出的公共 API 保持不变：
  *   - CommandHandler / CommandDefinition：类型
  *   - builtinCommands / findCommand：命令集合与查找
  *   - buildDebugLogFileName / formatDebugPayload / parseAskFlags：仍作为兼容 re-export
@@ -13,7 +13,6 @@
 
 import { askCommand } from "./commands/AskCommand/AskCommand.ts";
 import { chatCommand } from "./commands/ChatCommand/ChatCommand.ts";
-import { echoCommand } from "./commands/EchoCommand/EchoCommand.ts";
 import { helloCommand } from "./commands/HelloCommand/HelloCommand.ts";
 import type { CommandDefinition } from "./commands/types.ts";
 
@@ -28,7 +27,6 @@ export type { CommandDefinition, CommandHandler } from "./commands/types.ts";
 
 export const builtinCommands: readonly CommandDefinition[] = [
   helloCommand,
-  echoCommand,
   askCommand,
   chatCommand,
 ];
