@@ -7,7 +7,7 @@
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](./LICENSE)
 
-`nova-code` 旨在做一个开放、可扩展的 Code Agent 框架。当前仓库提供了最小可用的命令分发骨架（`hello` / `echo` / `ask`），后续会逐步接入真实的模型调用与代码工具能力。
+`nova-code` 旨在做一个开放、可扩展的 Code Agent 框架。当前仓库提供了最小可用的命令分发骨架（`hello` / `ask` / `chat`），后续会逐步接入更丰富的模型调用与代码工具能力。
 
 本仓库**同时是 CLI 也是库**：
 - 终端用户可以直接 `nova-code <command>` 使用；
@@ -57,7 +57,6 @@ nova-code --help          # 打印帮助
 nova-code --version       # 打印版本号
 
 nova-code hello [name]    # 向 [name] 打招呼，缺省为 world
-nova-code echo <text...>  # 原样回显参数
 nova-code ask             # 从 stdin 读取一行问题并回显
 ```
 
@@ -66,7 +65,6 @@ nova-code ask             # 从 stdin 读取一行问题并回显
 | 命令 | 描述 | 用法 |
 |------|------|------|
 | `hello` | 向指定的人打招呼，默认对象是 `world` | `nova-code hello [name]` |
-| `echo` | 原样回显传入的参数 | `nova-code echo <text...>` |
 | `ask` | 通过标准输入读取一行问题并原样回显 | `nova-code ask` |
 
 ---

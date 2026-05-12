@@ -51,7 +51,6 @@ afterEach(() => {
 describe("findCommand", () => {
   test("能找到所有内置命令", () => {
     expect(findCommand("hello")?.name).toBe("hello");
-    expect(findCommand("echo")?.name).toBe("echo");
     expect(findCommand("ask")?.name).toBe("ask");
   });
 
@@ -119,39 +118,6 @@ describe("hello 命令", () => {
     const exitCode = await hello?.run([""]);
     expect(exitCode).toBe(0);
     expect(capture.output()).toBe("Hello, !");
-  });
-});
-
-describe("echo 命令", () => {
-  const echo = findCommand("echo");
-
-  test("命令存在", () => {
-    expect(echo).toBeDefined();
-  });
-
-  test("空参数时返回 1 并打印错误", async () => {
-    const exitCode = await echo?.run([]);
-    expect(exitCode).toBe(1);
-    expect(capture.errorOutput()).toContain("至少需要一个参数");
-    expect(capture.log).not.toHaveBeenCalled();
-  });
-
-  test("单参数原样返回", async () => {
-    const exitCode = await echo?.run(["hello"]);
-    expect(exitCode).toBe(0);
-    expect(capture.output()).toBe("hello");
-  });
-
-  test("多参数空格连接", async () => {
-    const exitCode = await echo?.run(["a", "b", "c"]);
-    expect(exitCode).toBe(0);
-    expect(capture.output()).toBe("a b c");
-  });
-
-  test("保留特殊字符（含中文/标点）", async () => {
-    const exitCode = await echo?.run(["你好", "世界！"]);
-    expect(exitCode).toBe(0);
-    expect(capture.output()).toBe("你好 世界！");
   });
 });
 
