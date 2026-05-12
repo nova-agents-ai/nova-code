@@ -200,4 +200,111 @@ describe("renderAgentEvent", () => {
     // stderr：[tool] 行
     expect(err).toEqual(["\n[tool] ls {}\n"]);
   });
+
+  // ------------------------------------------------------------------------
+  // M3 权限事件
+  // ------------------------------------------------------------------------
+
+  test("permission_request 在 stderr 打提示；stdout 不动", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "permission_request",
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        input: { command: "git push" },
+        reason: "tool requires approval",
+      },
+      io,
+      state,
+    );
+
+    expect(out).toEqual([]);
+    expect(err).toEqual(["[permission] asking: Bash (tool requires approval)\n"]);
+  });
+
+  test("permission_request 在正文后触发 → 先补 stdout \\n 再打提示", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent({ type: "text_delta", delta: "正在通知..." }, io, state);
+    renderAgentEvent(
+      {
+        type: "permission_request",
+        toolUseId: "tu_1",
+        toolName: "FileWrite",
+        input: { path: "a.ts" },
+        reason: "tool requires approval",
+      },
+      io,
+      state,
+    );
+
+    expect(out).toEqual(["正在通知...", "\n"]);
+    expect(err).toEqual(["[permission] asking: FileWrite (tool requires approval)\n"]);
+    expect(state.inAssistantText).toBe(false);
+  });
+
+  test("permission_decision: allow 且无 persisted → 不输出噪点", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "permission_decision",
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        decision: "allow",
+        reason: "matched by session allow rule",
+      },
+      io,
+      state,
+    );
+
+    expect(out).toEqual([]);
+    expect(err).toEqual([]);
+  });
+
+  test("permission_decision: deny → stderr 一行", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "permission_decision",
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        decision: "deny",
+        reason: "blocked by built-in DENY pattern: rm-rf-root",
+      },
+      io,
+      state,
+    );
+
+    expect(err).toEqual([
+      "[permission] denied: Bash (blocked by built-in DENY pattern: rm-rf-root)\n",
+    ]);
+  });
+
+  test("permission_decision: allow + persisted=session → stderr 提示已保存", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "permission_decision",
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        decision: "allow",
+        reason: "user chose allow-always-session",
+        persisted: "session",
+      },
+      io,
+      state,
+    );
+
+    expect(err).toEqual(["[permission] allowed & saved to session: Bash\n"]);
+  });
 });

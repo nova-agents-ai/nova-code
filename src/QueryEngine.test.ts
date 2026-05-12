@@ -20,8 +20,11 @@ import type {
 import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError } from "./errors/index.ts";
 import { runAgentLoop } from "./QueryEngine.ts";
+import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
+import { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
 import { type AgentEvent, AgentStopReasonEnum, MessageRoleEnum } from "./types/message.ts";
+import type { PermissionRule, UserChoice } from "./types/permissions.ts";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fake SDK Client
@@ -685,5 +688,268 @@ describe("runAgentLoop - llmLogSink", () => {
     );
     expect(calls.length).toBe(1);
     expect(events[events.length - 1]?.type).toBe("done");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// M3 权限系统注入
+// ────────────────────────────────────────────────────────────────────────────
+
+function makeBashTool(requiresApproval: boolean): Tool {
+  return {
+    name: "Bash",
+    description: "run shell command",
+    input_schema: {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    },
+    execute: (input) => {
+      const { command } = input as { command?: unknown };
+      return `ran: ${String(command ?? "")}`;
+    },
+    requiresApproval,
+  };
+}
+
+function makeInMemoryStore(initialRules: readonly PermissionRule[] = []): PermissionStore {
+  return new PermissionStore({
+    cwd: "/tmp/nova-test",
+    projectRules: [],
+    globalRules: [],
+    sessionRules: initialRules,
+  });
+}
+
+function makeProvider(choice: UserChoice): PermissionProvider & { readonly calls: unknown[] } {
+  const calls: unknown[] = [];
+  return {
+    calls,
+    requestPermission: (req) => {
+      calls.push(req);
+      return Promise.resolve(choice);
+    },
+  };
+}
+
+describe("runAgentLoop - M3 权限注入", () => {
+  test("不传权限参数：行为与 M1/M2 等价，无 permission_* 事件", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "ls" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(true)],
+        client,
+      }),
+    );
+
+    const permissionEvents = events.filter(
+      (e) => e.type === "permission_request" || e.type === "permission_decision",
+    );
+    expect(permissionEvents.length).toBe(0);
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    expect(toolResults.length).toBe(1);
+    expect((toolResults[0] as AgentEvent & { type: "tool_result" }).isError).toBe(false);
+  });
+
+  test("deny 规则命中：不 execute，tool_result is_error=true", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "git push --force" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const store = makeInMemoryStore([{ toolName: "Bash", ruleContent: "git:*", behavior: "deny" }]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(false)],
+        client,
+        permissionMode: "default",
+        permissionStore: store,
+      }),
+    );
+
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    expect(decisions.length).toBe(1);
+    expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("deny");
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    const tr = toolResults[0] as AgentEvent & { type: "tool_result" };
+    expect(tr.isError).toBe(true);
+    expect(String(tr.content)).toContain("Permission denied");
+  });
+
+  test("ask + 无 provider → 安全降级为 deny", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "ls" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(true)],
+        client,
+        permissionMode: "default",
+        permissionStore: makeInMemoryStore(),
+      }),
+    );
+
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("deny");
+    expect(String((decisions[0] as AgentEvent & { type: "permission_decision" }).reason)).toContain(
+      "no permission provider",
+    );
+  });
+
+  test("ask + provider 返回 allow-once → 正常 execute，不持久化", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "ls" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const store = makeInMemoryStore();
+    const provider = makeProvider("allow-once");
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(true)],
+        client,
+        permissionMode: "default",
+        permissionStore: store,
+        permissionProvider: provider,
+      }),
+    );
+
+    expect(provider.calls.length).toBe(1);
+    const requests = events.filter((e) => e.type === "permission_request");
+    expect(requests.length).toBe(1);
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("allow");
+    expect(store.listBySource("session").length).toBe(0);
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    expect((toolResults[0] as AgentEvent & { type: "tool_result" }).isError).toBe(false);
+  });
+
+  test("ask + provider 返回 allow-always-session → 写入 session 规则", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "ls -la" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const store = makeInMemoryStore();
+    const provider = makeProvider("allow-always-session");
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(true)],
+        client,
+        permissionMode: "default",
+        permissionStore: store,
+        permissionProvider: provider,
+      }),
+    );
+
+    const sessionRules = store.listBySource("session");
+    expect(sessionRules.length).toBe(1);
+    expect(sessionRules[0]).toEqual({
+      toolName: "Bash",
+      ruleContent: "ls:*",
+      behavior: "allow",
+    });
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    const dec = decisions[0] as AgentEvent & { type: "permission_decision" };
+    expect(dec.decision).toBe("allow");
+    expect(dec.persisted).toBe("session");
+  });
+
+  test("bypassPermissions 模式：Bash 普通命令直接放行，不问用户", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "ls" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const provider = makeProvider("deny"); // 不该被调
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(true)],
+        client,
+        permissionMode: "bypassPermissions",
+        permissionStore: makeInMemoryStore(),
+        permissionProvider: provider,
+      }),
+    );
+
+    expect(provider.calls.length).toBe(0);
+    const permissionEvents = events.filter(
+      (e) => e.type === "permission_request" || e.type === "permission_decision",
+    );
+    expect(permissionEvents.length).toBe(0);
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    expect((toolResults[0] as AgentEvent & { type: "tool_result" }).isError).toBe(false);
+  });
+
+  test("DENY_PATTERNS 在 bypassPermissions 下仍然拦截", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "rm -rf /" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(false)],
+        client,
+        permissionMode: "bypassPermissions",
+        permissionStore: makeInMemoryStore(),
+      }),
+    );
+
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("deny");
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    expect((toolResults[0] as AgentEvent & { type: "tool_result" }).isError).toBe(true);
   });
 });

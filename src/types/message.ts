@@ -15,6 +15,8 @@
  * - 类型用 readonly 标记不可变属性，匹配 messages 数组追加而非原地变更的语义。
  */
 
+import type { PermissionDecision, PermissionRuleSource } from "./permissions.ts";
+
 /** 一段文本内容块。 */
 export interface TextBlock {
   readonly type: "text";
@@ -97,6 +99,32 @@ export type AgentEvent =
       readonly type: "done";
       readonly turns: number;
       readonly finalMessage: NovaMessage;
+    }
+  /**
+   * 权限引擎给出 ask 决策，调用方即将询问用户。主要用于 UI 展示“等待确认”状态
+   * 和令论消息埋点。逐条在 tool_call 之后 / tool_result 之前出现。
+   */
+  | {
+      readonly type: "permission_request";
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly input: Readonly<Record<string, unknown>>;
+      /** engine 给出的 ask 原因（人类可读，用于 UI 提示和日志）。 */
+      readonly reason: string;
+    }
+  /**
+   * 权限决策已落定（用户选择或 engine 直接 allow/deny）。UI 可用来渲染“✓ 允许”/
+   * “✗ 拒绝”，也便于 debug sink 溯源“为什么这次被 deny 了”。
+   */
+  | {
+      readonly type: "permission_decision";
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly decision: PermissionDecision;
+      /** engine / 用户给出的文字原因。 */
+      readonly reason: string;
+      /** 若用户选 allow-always-*，标识升级到哪一层 source。 */
+      readonly persisted?: PermissionRuleSource;
     };
 
 /**

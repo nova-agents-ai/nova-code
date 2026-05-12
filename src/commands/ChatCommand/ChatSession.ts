@@ -25,6 +25,8 @@
 
 import type { ResolvedConfig } from "../../config/config.ts";
 import { type LlmLogSink, runAgentLoop } from "../../QueryEngine.ts";
+import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
+import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
 import {
   type AgentEvent,
@@ -32,6 +34,7 @@ import {
   type NovaMessage,
   type ToolResultBlock,
 } from "../../types/message.ts";
+import type { PermissionMode } from "../../types/permissions.ts";
 
 /** 会话元信息（写入 JSONL 首行的 meta 行）。 */
 export interface SessionMeta {
@@ -60,6 +63,11 @@ export interface ChatTurnContext {
    * 由 ChatCommand 创建并透传；ChatSession 原样转交给 runAgentLoop。
    */
   readonly llmLogSink?: LlmLogSink;
+  // ── M3 权限系统注入（全部可选，透传给 runAgentLoop）────────────────────
+  readonly permissionMode?: PermissionMode;
+  readonly permissionStore?: PermissionStore;
+  readonly permissionProvider?: PermissionProvider;
+  readonly cwd?: string;
 }
 
 export class ChatSession {
@@ -98,6 +106,12 @@ export class ChatSession {
       tools: ctx.tools,
       signal: ctx.signal,
       ...(ctx.llmLogSink !== undefined ? { llmLogSink: ctx.llmLogSink } : {}),
+      ...(ctx.permissionMode !== undefined ? { permissionMode: ctx.permissionMode } : {}),
+      ...(ctx.permissionStore !== undefined ? { permissionStore: ctx.permissionStore } : {}),
+      ...(ctx.permissionProvider !== undefined
+        ? { permissionProvider: ctx.permissionProvider }
+        : {}),
+      ...(ctx.cwd !== undefined ? { cwd: ctx.cwd } : {}),
     });
 
     // 累积本轮待 flush 的 tool_result 块；下一个 turn_start 到达时打包成 user 消息
@@ -125,10 +139,12 @@ export class ChatSession {
             ...(event.isError ? { is_error: true } : {}),
           });
           break;
-        // done / text_delta / tool_call 不影响内部 messages，只是转发给上层
+        // done / text_delta / tool_call / permission_* 不影响内部 messages，只是转发给上层
         case "done":
         case "text_delta":
         case "tool_call":
+        case "permission_request":
+        case "permission_decision":
           break;
       }
       yield event;

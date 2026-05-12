@@ -14,6 +14,7 @@
 
 import { loadConfig } from "../../config/config.ts";
 import { ConfigError } from "../../errors/index.ts";
+import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "../AskCommand/debugSink.ts";
 import type { CommandDefinition } from "../types.ts";
@@ -27,19 +28,22 @@ export const chatCommand: CommandDefinition = {
   name: "chat",
   description: "进入多轮 chat REPL：连续对话 + 斜杠命令 + 会话持久化",
   usage:
-    "nova-code chat [--debug] [--debug-pretty] [--resume <id|alias>]\n" +
+    "nova-code chat [--debug] [--debug-pretty] [--resume <id|alias>] [--dangerously-skip-permissions]\n" +
     "  --debug:        把完整 AgentEvent 流写入 ~/.nova-code/logs/chat-*.log\n" +
     "  --debug-pretty: 隐含 --debug；日志多行缩进 + 字符串内换行展开\n" +
-    "  --resume:       从 ~/.nova-code/sessions/<id>.jsonl 恢复会话",
+    "  --resume:       从 ~/.nova-code/sessions/<id>.jsonl 恢复会话\n" +
+    "  --dangerously-skip-permissions: 跳过权限询问，仅 DENY_PATTERNS 拦截",
   run: async (args) => {
     let debug = false;
     let pretty = false;
     let resumeId: string | undefined;
+    let dangerouslySkipPermissions = false;
     try {
       const flags = parseChatFlags(args);
       debug = flags.debug;
       pretty = flags.pretty;
       resumeId = flags.resumeId;
+      dangerouslySkipPermissions = flags.dangerouslySkipPermissions;
     } catch (error) {
       if (error instanceof ChatFlagsError) {
         console.error(`chat: ${error.message}`);
@@ -86,6 +90,19 @@ export const chatCommand: CommandDefinition = {
         })
       : NULL_DEBUG_SINK;
 
+    // 加载三层权限规则（session + project + global）。
+    // 文件不存在/空不是错；ConfigError 走与 loadConfig 同样的退出码 1 通道。
+    let permissionStore: PermissionStore;
+    try {
+      permissionStore = await PermissionStore.load(process.cwd());
+    } catch (error) {
+      if (error instanceof ConfigError) {
+        console.error(`\nchat: ${error.message}`);
+        return 1;
+      }
+      throw error;
+    }
+
     try {
       if (debug && debugSink.logFilePath !== null) {
         process.stderr.write(`[debug] log file: ${debugSink.logFilePath}\n`);
@@ -103,6 +120,9 @@ export const chatCommand: CommandDefinition = {
         tools: builtinTools,
         debugSink,
         llmLogSink: debug ? llmLogSink : undefined,
+        permissionStore,
+        // --dangerously-skip-permissions → bypassPermissions，否则 default
+        permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

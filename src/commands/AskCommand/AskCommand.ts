@@ -17,7 +17,7 @@ export const askCommand: CommandDefinition = {
     "  --debug:        把完整 AgentEvent 流写入 ~/.nova-code/logs/ 下的会话日志文件（不污染 stderr）\n" +
     "  --debug-pretty: 隐含开启 --debug；日志文件改用多行缩进 JSON 并把字符串中的 \\n 解析成真换行，便于肉眼阅读",
   run: async (args) => {
-    const { debug, pretty, rest } = parseAskFlags(args);
+    const { debug, pretty, dangerouslySkipPermissions, rest } = parseAskFlags(args);
 
     // 优先使用命令行参数；没有则从 stdin 读一行（支持管道输入）
     const inlineQuestion = rest.join(" ").trim();
@@ -37,7 +37,7 @@ export const askCommand: CommandDefinition = {
       question = fromStdin.trim();
     }
 
-    return await runAskWithLLM(question, { debug, pretty });
+    return await runAskWithLLM(question, { debug, pretty, dangerouslySkipPermissions });
   },
 };
 

@@ -74,5 +74,22 @@ export function renderAgentEvent(event: AgentEvent, io: ReplIO, state: RenderSta
     // turn_end 不直接展示；完整 assistant message 已在 debug sink / session 内
     case "turn_end":
       break;
+    case "permission_request":
+      // M3：将询问用户。在 stderr 打一行提示（具体交互由 PermissionProvider 接管，
+      // 本渲染器不阻塞）。如果前面刚写过正文，先补换行避免拥挤。
+      if (state.inAssistantText) {
+        io.stdout("\n");
+        state.inAssistantText = false;
+      }
+      io.stderr(`[permission] asking: ${event.toolName} (${event.reason})\n`);
+      break;
+    case "permission_decision":
+      // M3：决策落定。allow 正常走不用増加噪点；deny / ask-after-deny 打一行。
+      if (event.decision === "deny") {
+        io.stderr(`[permission] denied: ${event.toolName} (${event.reason})\n`);
+      } else if (event.persisted !== undefined) {
+        io.stderr(`[permission] allowed & saved to ${event.persisted}: ${event.toolName}\n`);
+      }
+      break;
   }
 }
