@@ -16,12 +16,19 @@ import { loadConfig } from "../../config/config.ts";
 import { AbortError, ConfigError, MaxTurnsExceededError } from "../../errors/index.ts";
 import { runAgentLoop } from "../../QueryEngine.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
+import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "./debugSink.ts";
+import { createHeadlessPermissionProvider } from "./headlessPermissionProvider.ts";
 
 export interface RunAskOptions {
   readonly debug: boolean;
   readonly pretty: boolean;
+  /**
+   * --dangerously-skip-permissions 映射而来：打开后 permissionMode 从
+   * "acceptEdits" 升级到 "bypassPermissions"（DENY_PATTERNS 仍拦截）。
+   */
+  readonly dangerouslySkipPermissions?: boolean;
 }
 
 export async function runAskWithLLM(question: string, options: RunAskOptions): Promise<number> {
@@ -54,6 +61,12 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     }
 
     const config = await loadConfig();
+    // 加载三层权限规则；headless 模式下依然有 project/global 预先写入的规则
+    const permissionStore = await PermissionStore.load(process.cwd());
+    // headless provider：所有 ask 档统一 deny，在 stderr 留一行提示
+    const permissionProvider = createHeadlessPermissionProvider({
+      stderr: (t) => process.stderr.write(t),
+    });
     let inAssistantText = false;
 
     if (options.debug) {
@@ -72,6 +85,14 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       tools: builtinTools,
       signal: abortController.signal,
       llmLogSink: options.debug ? llmLogSink : undefined,
+      // ask 默认 acceptEdits：FileWrite/FileEdit 直接放行（便于常见 "生成代码"
+      // 场景），Bash 仍走规则判定→ask→headless deny
+      // --dangerously-skip-permissions → bypassPermissions
+      permissionMode:
+        options.dangerouslySkipPermissions === true ? "bypassPermissions" : "acceptEdits",
+      permissionStore,
+      permissionProvider,
+      cwd: process.cwd(),
     });
 
     for await (const event of generator) {
@@ -106,6 +127,20 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
           break;
         // turn_end 当前不需要展示给用户（debug 模式已通过 debugSink 输出）
         case "turn_end":
+          break;
+        case "permission_request":
+          // M3：在 headless ask 下，PermissionProvider 负责决策（默认 acceptEdits），
+          // 本分支仅给出可见提示。inAssistantText 以 case "tool_call" 同理补换行。
+          if (inAssistantText) {
+            process.stdout.write("\n");
+            inAssistantText = false;
+          }
+          process.stderr.write(`[permission] asking: ${event.toolName} (${event.reason})\n`);
+          break;
+        case "permission_decision":
+          if (event.decision === "deny") {
+            process.stderr.write(`[permission] denied: ${event.toolName} (${event.reason})\n`);
+          }
           break;
       }
     }

@@ -1,8 +1,8 @@
-# nova-code 路线图 v2.3
+# nova-code 路线图 v2.4
 
 > 渐进对齐 → 改进 → 超越
 >
-> 最后更新：2026-05-01
+> 最后更新：2026-05-04
 
 ---
 
@@ -121,7 +121,7 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 
 **DoD**：chat 模式连续 10 轮对话不丢上下文，Ctrl+C 二级中断
 
-### M3 — 权限与安全
+### M3 — 权限与安全 ✅（已完成）
 
 **新增**：调用前询问 / allowlist 持久化 / `--dangerously-skip-permissions`
 
@@ -130,6 +130,15 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 **失败信号**：每次都被询问烦到必须开 skip-permissions → 回退到 allowlist + 危险命令黑名单
 
 **DoD**：默认运行下，bash/write/edit 调用前必有用户确认
+
+**交付摘要**：
+- 类型骨架 `src/types/permissions.ts`（PermissionMode 四档 / PermissionBehavior / PermissionRule / UserChoice）
+- 七步流水线 `src/services/permissions/permissionEngine.ts`（DENY_PATTERNS → bypass → deny → allow/ask → acceptEdits → requiresApproval → 默认 allow）
+- 三层规则存储 `PermissionStore`（session > project > global，`<cwd>/.nova-code/permissions.json` + `~/.nova-code/permissions.json`）
+- `PermissionProvider` 接口 + REPL 版 5 档交互弹窗（`replPermissionProvider.ts`）+ ask 版 headless auto-deny（`headlessPermissionProvider.ts`）
+- QueryEngine 改造为 Phase A 串行权限判定 + Phase B 并行 execute + Phase C 按序组装，并扩展 `permission_request` / `permission_decision` 事件
+- `/permissions` 斜杠命令（list / mode）+ `--dangerously-skip-permissions` flag（chat/ask 均支持）
+- 详见 `docs/design/M3-permissions.md`；使用手册 `docs/manual/M3-usage-guide.md`；实现架构 `docs/architecture/M3/README.md`
 
 ### M4 — 上下文压缩
 
@@ -436,6 +445,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.4**（2026-05-04）：M3 权限与安全 milestone 落地：七步权限流水线 + 三层规则存储 + 4 档模式 + 5 档交互弹窗；`--dangerously-skip-permissions` / `/permissions` 斜杠命令；ask 默认 acceptEdits + headless auto-deny Provider；chat 默认 default + REPL 5 档 Provider；详见 `docs/design/M3-permissions.md`、使用手册 `docs/manual/M3-usage-guide.md`、实现架构 `docs/architecture/M3/README.md`
 - **v2.3**（2026-05-04）：修复 §7.0 表格中 `src/llm/` 应消失的时机表述（M1 → M1.5，与 M1 / M1.5 章节一致）；M1.5 在本版本落地：`src/llm/` 命名空间清空，顺带交付 `QueryEngine.ts` / `services/api/{client,errors,errorUtils,withRetry}` / `errors/` / `types/message.ts` / `commands/<X>Command/`；新增严谨单测的 `withRetry`（429/502/503/504/529 重试 + 网络错误 + Retry-After + AbortSignal）；新增 e2e 用例 m1-5-e2e-writeflow（真子进程 + 内嵌 mock server 覆盖 Grep→FileEdit→Bash 读写闭环）；debug sink 预埋 sessionId 参数为 M2 chat REPL 预留；详见 `docs/design/M1.5-refactor.md`
 - **v2.2**（2026-05-01）：新增 §7.0 "与 claude-code 结构对齐（最高优先级原则）"，明确目录 / 模块 / 类命名必须与 claude-code 一致，列出当前 5 处 M0 历史偏离及偿还时机；M1 milestone 重写"新增 / 配套"段落，工具改用 PascalCase + Tool 后缀（BashTool 等），增加"结构对齐"步骤与"与 claude-code 的差异声明"段；M1.5 milestone 加入命名空间清理（`src/llm/` 删除）与 `QueryEngine.ts` 重命名
 - **v2.1**（2026-05-01）：修复 v2 内在不一致 — 删除阶段月数估算（与"完成度驱动"原则统一）；M1.5 补全 retry/rate limit 与 debug sink 切分；依赖图重绘（M3 从 M1.5 直接分叉，M11 依赖显式画出）；Phase 3 表格加出处声明；Phase 3 主线 B 补评分模板；基线表加快照日期

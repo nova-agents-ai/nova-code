@@ -12,6 +12,7 @@ describe("parseChatFlags", () => {
     expect(flags.debug).toBe(false);
     expect(flags.pretty).toBe(false);
     expect(flags.resumeId).toBeUndefined();
+    expect(flags.dangerouslySkipPermissions).toBe(false);
     expect(flags.rest).toEqual([]);
   });
 
@@ -58,5 +59,18 @@ describe("parseChatFlags", () => {
 
   test("位置参数 → 抛 ChatFlagsError", () => {
     expect(() => parseChatFlags(["hello"])).toThrow(ChatFlagsError);
+  });
+
+  test("--dangerously-skip-permissions → dangerouslySkipPermissions=true", () => {
+    const flags = parseChatFlags(["--dangerously-skip-permissions"]);
+    expect(flags.dangerouslySkipPermissions).toBe(true);
+    expect(flags.debug).toBe(false);
+  });
+
+  test("--dangerously-skip-permissions 可与其它 flag 共存", () => {
+    const flags = parseChatFlags(["--debug", "--dangerously-skip-permissions", "--resume", "x"]);
+    expect(flags.debug).toBe(true);
+    expect(flags.dangerouslySkipPermissions).toBe(true);
+    expect(flags.resumeId).toBe("x");
   });
 });

@@ -21,12 +21,15 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 
 import type { ConfigSource, ResolvedConfig } from "../../config/config.ts";
 import { AbortError } from "../../errors/index.ts";
+import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
+import type { PermissionMode } from "../../types/permissions.ts";
 import type { DebugSink } from "../AskCommand/debugSink.ts";
 import type { ChatSession } from "./ChatSession.ts";
 import { createRenderState, type ReplIO, renderAgentEvent } from "./renderAgentEvent.ts";
+import { createReplPermissionProvider } from "./replPermissionProvider.ts";
 import { dispatchSlash } from "./slash/dispatcher.ts";
-import type { SlashIO } from "./slash/types.ts";
+import type { PermissionModeRef, SlashIO } from "./slash/types.ts";
 
 /** runChatRepl 的参数。 */
 export interface RunChatReplParams {
@@ -46,6 +49,13 @@ export interface RunChatReplParams {
    * 注入它就等价于接管所有用户可见输出。
    */
   readonly io?: ReplIO;
+  /**
+   * 可选：权限规则存储。注入后会一并传给 sendTurn，让 QueryEngine 走
+   * permissionEngine 的七步流水线。未注入则等价于旧版全放行。
+   */
+  readonly permissionStore?: PermissionStore;
+  /** 可选：权限模式，默认 "default"。 */
+  readonly permissionMode?: PermissionMode;
 }
 
 /**
@@ -69,7 +79,16 @@ const PENDING_EXIT_WINDOW_MS = 1500;
  *  - 2：顶层未处理异常（调用方可选择忽略，此处只做防御性兜底）
  */
 export async function runChatRepl(params: RunChatReplParams): Promise<number> {
-  const { session, config, tools, debugSink, llmLogSink, configSource } = params;
+  const {
+    session,
+    config,
+    tools,
+    debugSink,
+    llmLogSink,
+    configSource,
+    permissionStore,
+    permissionMode,
+  } = params;
 
   // ────────────── I/O wiring ──────────────
   const io: ReplIO = params.io ?? defaultReplIO();
@@ -138,6 +157,23 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
   rl.on("SIGINT", processSigintHandler);
   process.on("SIGINT", processSigintHandler);
 
+  // ────────────── PermissionProvider：给 ask 档的工具调用弹 5 档菜单 ──────────────
+  // 只有 permissionStore 注入了才有意义（无 store 时 ask → deny，provider 不会被调用）
+  const permissionProvider =
+    permissionStore !== undefined ? createReplPermissionProvider({ io, readLine }) : undefined;
+
+  // ────────────── PermissionModeRef：支持 /permissions mode 运行时切换 ──────────────
+  // 封闭一个 mutable 变量包装 get/set，每轮 sendTurn 读取最新值
+  const modeState: { current: PermissionMode } = {
+    current: permissionMode ?? "default",
+  };
+  const permissionModeRef: PermissionModeRef = {
+    get: () => modeState.current,
+    set: (m) => {
+      modeState.current = m;
+    },
+  };
+
   // ────────────── SlashIO：把 readline 的 readLine 封装成 confirm ──────────────
   const slashIO: SlashIO = {
     print: (text) => io.stderr(text),
@@ -185,6 +221,8 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         session,
         io: slashIO,
         ...(configSource ? { configSource } : {}),
+        ...(permissionStore !== undefined ? { permissionStore } : {}),
+        permissionModeRef,
       });
       if (dispatch.handled) {
         if (dispatch.result.action === "exit") {
@@ -204,6 +242,10 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           tools,
           signal: abortController.signal,
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
+          permissionMode: modeState.current,
+          ...(permissionStore !== undefined ? { permissionStore } : {}),
+          ...(permissionProvider !== undefined ? { permissionProvider } : {}),
+          cwd: process.cwd(),
         });
         for await (const event of gen) {
           debugSink.write(event);

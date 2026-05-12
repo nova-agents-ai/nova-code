@@ -71,13 +71,30 @@ tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，e
 
 ## 6. 提交前以及每一次代码改动后校验（必跑）
 
+**硬性约束：每次代码改动后，以下三条命令必须全部通过，缺一不可。**
+
 ```bash
 bun run typecheck          # tsc --noEmit
-bun run check              # biome lint + format 检查
 bun test                   # 跑 *.test.ts 用例（无用例时 0 退出）
+bun run check              # biome lint + format 检查
 ```
 
-`prepublishOnly` 钩子会强制跑 `typecheck && check`，不通过则发布失败。
+### 零容忍原则（关键）
+
+- **任何一条命令报错都必须当场修复**，**即使该报错并非本次改动引入**（例如历史遗留的 biome formatter 偏差、上游 milestone 留下的格式问题）。
+- 不允许把 "不是我引入的" 当作跳过修复的理由 —— 留着的红色输出会污染下一次校验的判断基线，并掩盖真正的回归。
+- biome formatter 类问题 90% 可用 `bun run check:fix` 一键修复；修复后必须**重新跑完三件套**确认无新增问题。
+- 修复后 `git status` 中可能出现 "非本次改动相关" 的格式化文件，这是预期行为，应一起提交。
+
+### 命令含义速查
+
+| 命令 | 作用 | 失败时的修复手段 |
+| --- | --- | --- |
+| `bun run typecheck` | TypeScript 类型检查 | 修类型签名 / import / 缺失字段 |
+| `bun test` | bun:test 单测全量 | 修被测代码或修测试期望，禁止 skip |
+| `bun run check` | biome lint + format 检查 | 优先 `bun run check:fix` 自动修；剩余的人工修 |
+
+`prepublishOnly` 钩子会强制跑 `typecheck && check && test`，不通过则发布失败。
 
 ## 7. 测试
 
@@ -100,3 +117,25 @@ describe("runCli", () => {
 - **禁止**引入 React / Vue / Tailwind / Vite。
 - **禁止**新增 `.html` / `.tsx` / `.css` 文件。
 - 如确需 Web UI，请先与维护者讨论，再独立放到 `web/` 子目录，避免污染 CLI 主项目。
+
+## 9. Milestone 交付文档约定（硬性约束）
+
+**每一个 roadmap 阶段（M0 / M1 / M1.5 / M2 / M3 …）完成后，除代码 DoD 外，必须同时交付以下三类文档：**
+
+1. **设计文档**：`docs/design/M<N>-<topic>.md`
+   - 面向代码审阅者 / 未来维护者
+   - 内容：设计决策、模块拆分、核心流程图、与 claude-code 的差异、向后兼容说明、测试覆盖范围、后续预留
+   - 已有样例：`docs/design/M1-tools.md` / `docs/design/M1.5-refactor.md` / `docs/design/M3-permissions.md`
+
+2. **使用手册**：`docs/manual/M<N>-usage-guide.md`
+   - 面向终端用户 / 新人上手
+   - 内容：前置与安装 · 配置 · 命令总览 · 每个新增能力的完整操作例 · **端到端可复制粘贴的验证脚本** · 提交前校验矩阵 · 故障排查表
+   - 已有样例：`docs/manual/M2-usage-guide.md`
+
+3. **实现架构文档**：`docs/architecture/`下的阶段快照
+   - 面向读代码的人（内部模块如何拼装、数据流、目录布局、关键函数的职责边界）
+   - **单文件模式**：内容量小时放 `docs/architecture/M<N>-architecture.md`（已有样例：`docs/architecture/M0-architecture.md`）
+   - **多文件模式**：内容量大时建 `docs/architecture/M<N>/` 目录，里面按主题拆子文件，必然有 `README.md` 作为入口（已有样例：`docs/architecture/M1.5/` / `docs/architecture/M2/` / `docs/architecture/M3/`）
+   - 选型原则：能始终在一个文件装下无需交叉引用就用单文件；一旦需要分模块独立速查就用多文件目录
+
+✅ milestone DoD 补充条款：三类文档均写完且互相交叉引用后，才算阶段归档。`docs/roadmap.md` 的交付摘要必须同时指向这三份（或单文件 / 入口 `README.md`）。不改 M0 / M1.5 / M2 等历史快照，新阶段新目录，以反映版本状态而非当前状态。

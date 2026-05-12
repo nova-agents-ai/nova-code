@@ -11,6 +11,11 @@ export interface ChatFlags {
   readonly pretty: boolean;
   /** --resume <id|alias> 指定要恢复的会话；未提供则开新会话。 */
   readonly resumeId: string | undefined;
+  /**
+   * --dangerously-skip-permissions：跳过七步权限流水线中的交互询问，
+   * 映射到 permissionMode="bypassPermissions"。DENY_PATTERNS 仍然会拦截。
+   */
+  readonly dangerouslySkipPermissions: boolean;
   /** 未能消费的剩余位置参数；当前 chat 不接受位置参数，非空即属异常。 */
   readonly rest: readonly string[];
 }
@@ -34,6 +39,7 @@ export function parseChatFlags(args: readonly string[]): ChatFlags {
   let debug = false;
   let pretty = false;
   let resumeId: string | undefined;
+  let dangerouslySkipPermissions = false;
   const rest: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -45,6 +51,10 @@ export function parseChatFlags(args: readonly string[]): ChatFlags {
     if (arg === "--debug-pretty") {
       debug = true;
       pretty = true;
+      continue;
+    }
+    if (arg === "--dangerously-skip-permissions") {
+      dangerouslySkipPermissions = true;
       continue;
     }
     if (arg === "--resume") {
@@ -75,5 +85,5 @@ export function parseChatFlags(args: readonly string[]): ChatFlags {
     throw new ChatFlagsError(`chat 不接受位置参数：${rest.join(" ")}`);
   }
 
-  return { debug, pretty, resumeId, rest };
+  return { debug, pretty, resumeId, dangerouslySkipPermissions, rest };
 }

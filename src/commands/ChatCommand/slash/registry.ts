@@ -8,15 +8,17 @@ import { clearCommand } from "./clear.ts";
 import { exitCommand } from "./exit.ts";
 import { makeHelpCommand } from "./help.ts";
 import { loadCommand } from "./load.ts";
+import { permissionsCommand } from "./permissions.ts";
 import { saveCommand } from "./save.ts";
 import type { SlashCommand } from "./types.ts";
 
-// 先构造非 help 的命令数组；help 通过工厂反向拿到"全部命令（含 help 自身）"
+// 先构造非 help 的命令数组；help 通过工厂反向拿到“全部命令（含 help 自身）”
 const nonHelpCommands: readonly SlashCommand[] = [
   clearCommand,
   exitCommand,
   saveCommand,
   loadCommand,
+  permissionsCommand,
 ];
 
 // getter 闭包：保证 help 拿到的是整份 builtinSlashCommands（含 help）

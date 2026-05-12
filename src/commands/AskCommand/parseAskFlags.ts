@@ -5,6 +5,11 @@
 export interface AskFlags {
   readonly debug: boolean;
   readonly pretty: boolean;
+  /**
+   * --dangerously-skip-permissions：跳过权限询问，映射到 permissionMode="bypassPermissions"。
+   * DENY_PATTERNS 仍然会拦截。
+   */
+  readonly dangerouslySkipPermissions: boolean;
   readonly rest: readonly string[];
 }
 
@@ -18,6 +23,7 @@ export interface AskFlags {
 export function parseAskFlags(args: readonly string[]): AskFlags {
   let debug = false;
   let pretty = false;
+  let dangerouslySkipPermissions = false;
   const rest: string[] = [];
   for (const arg of args) {
     if (arg === "--debug") {
@@ -29,7 +35,11 @@ export function parseAskFlags(args: readonly string[]): AskFlags {
       pretty = true;
       continue;
     }
+    if (arg === "--dangerously-skip-permissions") {
+      dangerouslySkipPermissions = true;
+      continue;
+    }
     rest.push(arg);
   }
-  return { debug, pretty, rest };
+  return { debug, pretty, dangerouslySkipPermissions, rest };
 }

@@ -38,6 +38,15 @@ import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError, ToolExecutionError } from "./errors/index.ts";
 import { createAnthropicClient } from "./services/api/client.ts";
 import { LLMApiError } from "./services/api/errors.ts";
+import { BASH_TOOL_NAME } from "./services/permissions/bashRuleMatcher.ts";
+import { extractBashCommand } from "./services/permissions/dangerousPatterns.ts";
+import { extractFilePath, isFileWriteToolName } from "./services/permissions/fileRuleMatcher.ts";
+import {
+  decisionFromUserChoice,
+  type PermissionProvider,
+} from "./services/permissions/PermissionProvider.ts";
+import { evaluatePermission } from "./services/permissions/permissionEngine.ts";
+import type { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
 import { findTool } from "./tools.ts";
 import {
@@ -49,6 +58,7 @@ import {
   type ToolResultBlock,
   type ToolUseBlock,
 } from "./types/message.ts";
+import type { PermissionMode, PermissionRule } from "./types/permissions.ts";
 
 /**
  * 用于记录原始 LLM 请求/响应的最小 sink 接口。
@@ -104,6 +114,24 @@ export interface AgentLoopParams {
    * 不传即不记录（ask/chat 未开 --debug 时的默认值）。
    */
   readonly llmLogSink?: LlmLogSink;
+
+  // ── M3 权限系统注入（4 个字段同进同出）──────────────────────────────
+  //
+  // 设计原则：全部可选，不传时 QueryEngine 的行为与 M1/M2 完全一致（无权限检查，
+  // 所有 tool_use 直接 execute）。这样保证 QueryEngine 的既有测试不需要改。
+  //
+  // 一旦传入 permissionMode + permissionStore，QueryEngine 就会在每次执行
+  // 工具前调 evaluatePermission；若决策为 ask，再调 permissionProvider；
+  // 若 provider 也未传而决策是 ask，则安全从严降级为 deny。
+
+  /** 当前会话的权限模式。不传视为不启用权限系统。 */
+  readonly permissionMode?: PermissionMode;
+  /** 三层规则存储。不传视为不启用权限系统。 */
+  readonly permissionStore?: PermissionStore;
+  /** 当决策为 ask 时询问用户的实现。不传且决策为 ask 时会降级为 deny。 */
+  readonly permissionProvider?: PermissionProvider;
+  /** 用于 file glob 相对化；不传时 evaluatePermission 会 fallback 到 process.cwd()。 */
+  readonly cwd?: string;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
@@ -195,6 +223,10 @@ export async function* runAgentLoop(
       toolUses,
       tools,
       signal,
+      permissionMode: params.permissionMode,
+      permissionStore: params.permissionStore,
+      permissionProvider: params.permissionProvider,
+      cwd: params.cwd,
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -331,21 +363,37 @@ function writeLlmError(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 工具执行：并行跑所有 tool_use，产出 tool_result 块
+// 工具执行：两阶段
+//   Phase A（串行）：对每个 tool_use 做权限判定，发 permission_request/decision 事件
+//   Phase B（并行）：只对决策为 allow 的 tool_use 并行 execute
+// 最后按原始顺序组装 ToolResultBlock[] 并 yield tool_result
 // ────────────────────────────────────────────────────────────────────────────
 
 interface ExecuteToolsParams {
   readonly toolUses: readonly ToolUseBlock[];
   readonly tools: readonly Tool[];
   readonly signal: AbortSignal;
+  // M3 权限系统：全部可选，不传时退化为"全放行"（向后兼容）
+  readonly permissionMode?: PermissionMode;
+  readonly permissionStore?: PermissionStore;
+  readonly permissionProvider?: PermissionProvider;
+  readonly cwd?: string;
+}
+
+/** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
+interface ToolDecision {
+  readonly use: ToolUseBlock;
+  readonly decision: "allow" | "deny";
+  readonly denyReason?: string;
 }
 
 async function* executeToolsAndYieldEvents(
   params: ExecuteToolsParams,
 ): AsyncGenerator<AgentEvent, ToolResultBlock[], void> {
-  const { toolUses, tools, signal } = params;
+  const { toolUses, tools, signal, permissionMode, permissionStore, permissionProvider, cwd } =
+    params;
 
-  // 先发出 tool_call 事件（按声明顺序），再并行执行
+  // 先按声明顺序发出所有 tool_call 事件（与原行为一致，便于 UI 先看到本轮工具列表）
   for (const use of toolUses) {
     yield {
       type: "tool_call",
@@ -355,16 +403,148 @@ async function* executeToolsAndYieldEvents(
     };
   }
 
+  // ── Phase A：权限判定（串行，避免并发弹窗）
+  const decisions: ToolDecision[] = [];
+  for (const use of toolUses) {
+    if (signal.aborted) throw new AbortError();
+
+    // 未注入权限系统 → 全放行（兼容现有测试与 M1/M2 行为）
+    if (permissionMode === undefined || permissionStore === undefined) {
+      decisions.push({ use, decision: "allow" });
+      continue;
+    }
+
+    const tool = findTool(use.name, tools);
+    const requiresApproval = tool?.requiresApproval ?? false;
+    const evalResult = evaluatePermission({
+      mode: permissionMode,
+      toolName: use.name,
+      requiresApproval,
+      input: use.input,
+      rules: permissionStore.getMergedRules(),
+      cwd: cwd ?? process.cwd(),
+    });
+
+    if (evalResult.decision === "allow") {
+      decisions.push({ use, decision: "allow" });
+      continue;
+    }
+
+    if (evalResult.decision === "deny") {
+      yield {
+        type: "permission_decision",
+        toolUseId: use.id,
+        toolName: use.name,
+        decision: "deny",
+        reason: evalResult.reason,
+      };
+      decisions.push({ use, decision: "deny", denyReason: evalResult.reason });
+      continue;
+    }
+
+    // decision === "ask"：需要 provider；未传则安全从严降级为 deny
+    if (permissionProvider === undefined) {
+      const reason = `${evalResult.reason} (no permission provider configured, denying by default)`;
+      yield {
+        type: "permission_decision",
+        toolUseId: use.id,
+        toolName: use.name,
+        decision: "deny",
+        reason,
+      };
+      decisions.push({ use, decision: "deny", denyReason: reason });
+      continue;
+    }
+
+    yield {
+      type: "permission_request",
+      toolUseId: use.id,
+      toolName: use.name,
+      input: use.input,
+      reason: evalResult.reason,
+    };
+
+    const choice = await permissionProvider.requestPermission({
+      toolName: use.name,
+      toolUseId: use.id,
+      input: use.input,
+      reason: evalResult.reason,
+    });
+    const outcome = decisionFromUserChoice(choice);
+
+    // 如果用户选了升级，把规则写回 store（session 只改内存；project/global 会写盘）
+    let persisted: "session" | "project" | "global" | undefined;
+    if (outcome.decision === "allow" && outcome.persistTo !== undefined) {
+      const rule = buildPersistedRule(use.name, use.input);
+      if (rule !== undefined) {
+        await permissionStore.addRule(outcome.persistTo, rule);
+        persisted = outcome.persistTo;
+      }
+    }
+
+    yield {
+      type: "permission_decision",
+      toolUseId: use.id,
+      toolName: use.name,
+      decision: outcome.decision,
+      reason: `user chose ${choice}`,
+      ...(persisted !== undefined ? { persisted } : {}),
+    };
+
+    if (outcome.decision === "allow") {
+      decisions.push({ use, decision: "allow" });
+    } else {
+      decisions.push({ use, decision: "deny", denyReason: `user denied (${choice})` });
+    }
+  }
+
+  // ── Phase B：对 decision === "allow" 的并行 execute
+  const allowedIndexes: number[] = [];
+  for (let i = 0; i < decisions.length; i += 1) {
+    const d = decisions[i];
+    if (d !== undefined && d.decision === "allow") allowedIndexes.push(i);
+  }
   const settled = await Promise.allSettled(
-    toolUses.map((use) => executeOneTool(use, tools, signal)),
+    allowedIndexes.map((i) => {
+      const d = decisions[i];
+      // allowedIndexes 来自 decisions 本身，d 必定存在；noUncheckedIndexedAccess 要求收窄
+      if (d === undefined) {
+        return Promise.reject(new Error("internal: missing decision entry"));
+      }
+      return executeOneTool(d.use, tools, signal);
+    }),
   );
 
+  // ── Phase C：按原始顺序组装 ToolResultBlock[]
   const results: ToolResultBlock[] = [];
-  for (const [index, outcome] of settled.entries()) {
-    const use = toolUses[index];
-    // toolUses 是 readonly 数组、长度与 settled 一致——这里不会越界，
-    // 但 noUncheckedIndexedAccess 仍要求收窄
-    if (use === undefined) continue;
+  let settledCursor = 0;
+  for (let i = 0; i < decisions.length; i += 1) {
+    const d = decisions[i];
+    if (d === undefined) continue;
+    const use = d.use;
+
+    if (d.decision === "deny") {
+      const errorMessage = `Permission denied: ${d.denyReason ?? "no reason"}`;
+      const block: ToolResultBlock = {
+        type: "tool_result",
+        tool_use_id: use.id,
+        content: errorMessage,
+        is_error: true,
+      };
+      results.push(block);
+      yield {
+        type: "tool_result",
+        toolUseId: use.id,
+        toolName: use.name,
+        content: errorMessage,
+        isError: true,
+      };
+      continue;
+    }
+
+    const outcome = settled[settledCursor];
+    settledCursor += 1;
+    if (outcome === undefined) continue;
 
     if (outcome.status === "fulfilled") {
       const block: ToolResultBlock = {
@@ -399,6 +579,32 @@ async function* executeToolsAndYieldEvents(
     }
   }
   return results;
+}
+
+/**
+ * 从工具入参构造一条 behavior=allow 的持久化规则。
+ *
+ * - Bash：用 "命令名:*"（如 `git status -s` → `git:*`），允许该命令所有后续调用
+ * - FileWrite / FileEdit：用原始 file_path 作为 ruleContent
+ * - 其它工具：ruleContent 缺省（整个工具允许）
+ *
+ * 未来 Task 7 可能让 UI 询问用户"要升级成什么形式的规则"（更窄 / 更宽），
+ * M3 当前版本采用"命令名 + :*"这种直观的放宽策略。
+ */
+function buildPersistedRule(toolName: string, input: unknown): PermissionRule | undefined {
+  if (toolName === BASH_TOOL_NAME) {
+    const command = extractBashCommand(input);
+    if (command === undefined) return undefined;
+    const first = command.trim().split(/\s+/)[0];
+    if (first === undefined || first === "") return undefined;
+    return { toolName, ruleContent: `${first}:*`, behavior: "allow" };
+  }
+  if (isFileWriteToolName(toolName)) {
+    const filePath = extractFilePath(input);
+    if (filePath === undefined) return undefined;
+    return { toolName, ruleContent: filePath, behavior: "allow" };
+  }
+  return { toolName, behavior: "allow" };
 }
 
 async function executeOneTool(

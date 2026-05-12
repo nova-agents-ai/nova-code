@@ -11,6 +11,8 @@
  */
 
 import type { ConfigSource } from "../../../config/config.ts";
+import type { PermissionStore } from "../../../services/permissions/permissionStore.ts";
+import type { PermissionMode } from "../../../types/permissions.ts";
 import type { ChatSession } from "../ChatSession.ts";
 
 /** REPL 与斜杠命令之间的 I/O 通道。 */
@@ -36,6 +38,17 @@ export type SlashResult =
   | { readonly action: "continue" }
   | { readonly action: "exit"; readonly exitCode?: number };
 
+/**
+ * 权限模式可读可写 ref，给 /permissions mode 命令在运行时切换模式。
+ *
+ * 由 runChatRepl 提供实现：用一个封闭上的 mutable 变量包装 get/set，
+ * 每轮 sendTurn 读取最新值传给 runAgentLoop。
+ */
+export interface PermissionModeRef {
+  get(): PermissionMode;
+  set(mode: PermissionMode): void;
+}
+
 /** 调用具体 SlashCommand.run 时的上下文。 */
 export interface SlashContext {
   readonly session: ChatSession;
@@ -44,6 +57,10 @@ export interface SlashContext {
   readonly args: readonly string[];
   /** 注入 home 目录等，主要给单测用；生产路径通常省略。 */
   readonly configSource?: ConfigSource;
+  /** 权限规则存储；/permissions list、/permissions add 依赖它。 */
+  readonly permissionStore?: PermissionStore;
+  /** 权限模式 ref；/permissions mode 依赖它。 */
+  readonly permissionModeRef?: PermissionModeRef;
 }
 
 /** 一条斜杠命令的定义。 */
