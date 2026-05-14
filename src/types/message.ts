@@ -165,6 +165,8 @@ export type AgentEvent =
       readonly trigger: CompactTrigger;
       readonly preCompactTokenCount: number;
       readonly postCompactTokenCount?: number;
+      /** compact 自身 LLM 调用的 usage；成功时用于 M5 cost tracker。 */
+      readonly usage?: ApiUsage;
       readonly error?: string;
     };
 

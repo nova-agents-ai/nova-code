@@ -33,6 +33,7 @@ import type { PermissionStore } from "../../services/permissions/permissionStore
 import type { Tool } from "../../Tool.ts";
 import {
   type AgentEvent,
+  type ApiUsage,
   MessageRoleEnum,
   type NovaMessage,
   type ToolResultBlock,
@@ -103,6 +104,8 @@ export interface ChatCompactOutcome {
   readonly preCompactTokenCount: number;
   readonly postCompactTokenCount: number;
   readonly compactedMessages: number;
+  /** compact 这次 LLM 调用本身的 token usage；M5 cost tracker 用。 */
+  readonly compactionUsage: ApiUsage;
 }
 
 export class ChatSession {
@@ -253,6 +256,7 @@ export class ChatSession {
       preCompactTokenCount: result.preCompactTokenCount,
       postCompactTokenCount: result.postCompactTokenCount,
       compactedMessages: compactedCount,
+      compactionUsage: result.compactionUsage,
     };
   }
 

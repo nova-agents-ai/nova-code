@@ -40,6 +40,9 @@ const LOGS_DIR_NAME = "logs";
 /** 会话持久化（JSONL）存放的子目录名，M2 chat REPL 新增。 */
 const SESSIONS_DIR_NAME = "sessions";
 
+/** M5 cost ledger 文件名（位于 ~/.nova-code 下）。 */
+const COST_LEDGER_FILE_NAME = "cost.jsonl";
+
 /** 环境变量名。统一使用 NOVA_ 前缀。 */
 const ENV_API_KEY = "NOVA_API_KEY";
 const ENV_BASE_URL = "NOVA_BASE_URL";
@@ -103,6 +106,12 @@ export function getLogsDirPath(source: ConfigSource = {}): string {
 export function getSessionsDirPath(source: ConfigSource = {}): string {
   const home = source.homeDir ?? homedir();
   return join(home, CONFIG_DIR_NAME, SESSIONS_DIR_NAME);
+}
+
+/** 计算 cost ledger 的绝对路径（~/.nova-code/cost.jsonl）。 */
+export function getCostLedgerPath(source: ConfigSource = {}): string {
+  const home = source.homeDir ?? homedir();
+  return join(home, CONFIG_DIR_NAME, COST_LEDGER_FILE_NAME);
 }
 
 /**

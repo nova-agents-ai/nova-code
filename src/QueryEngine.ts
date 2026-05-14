@@ -954,6 +954,9 @@ async function* tryAutoCompact(
     ...(outcome.postCompactTokenCount !== undefined
       ? { postCompactTokenCount: outcome.postCompactTokenCount }
       : {}),
+    ...(outcome.compactionResult !== undefined
+      ? { usage: outcome.compactionResult.compactionUsage }
+      : {}),
     ...(outcome.error !== undefined ? { error: outcome.error } : {}),
   };
 

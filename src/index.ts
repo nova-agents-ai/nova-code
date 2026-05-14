@@ -14,12 +14,12 @@ export { builtinCommands, findCommand } from "./commands.ts";
 export type { ConfigSource, PersistedConfig, ResolvedConfig } from "./config/config.ts";
 export {
   getConfigFilePath,
+  getCostLedgerPath,
   loadConfig,
   loadPersistedConfig,
   resolveConfig,
   savePersistedConfig,
 } from "./config/config.ts";
-
 // 错误体系（M1.5 起搬到 src/errors/ 与 src/services/api/errors.ts）
 export {
   AbortError,
@@ -31,6 +31,14 @@ export {
 export type { AgentLoopParams } from "./QueryEngine.ts";
 export { runAgentLoop } from "./QueryEngine.ts";
 export { LLMApiError } from "./services/api/errors.ts";
+// Cost 统计（M5）
+export type { CostLedgerEntry, CostModelUsage, CostSnapshot } from "./services/cost/index.ts";
+export {
+  CostTracker,
+  formatCostSummary,
+  readCostLedgerEntries,
+  summarizeCostLedgerEntries,
+} from "./services/cost/index.ts";
 // Tool 接口（M1 步骤 1 起搬到顶层 src/Tool.ts）
 export type { Tool, ToolExecutionContext, ToolInputSchema } from "./Tool.ts";
 // 工具系统：注册表 + 内置工具（M1 步骤 1 起搬到顶层 src/tools.ts）

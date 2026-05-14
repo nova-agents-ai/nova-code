@@ -16,6 +16,7 @@ import { loadConfig } from "../../config/config.ts";
 import { ConfigError } from "../../errors/index.ts";
 import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
+import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { builtinTools } from "../../tools.ts";
@@ -68,6 +69,8 @@ export const chatCommand: CommandDefinition = {
       }
       throw error;
     }
+
+    const costTracker = new CostTracker();
 
     // 构造 ChatSession：新开或从 --resume 加载
     let session: ChatSession;
@@ -141,7 +144,9 @@ export const chatCommand: CommandDefinition = {
         // --dangerously-skip-permissions → bypassPermissions，否则 default
         permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
         ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+        costTracker,
       });
+      await appendChatCostLedgerBestEffort(costTracker, session.meta.sessionId, exitCode);
       logEvent("tengu_exit", { command: "chat", exitCode });
       return exitCode;
     } catch (error) {
@@ -155,6 +160,29 @@ export const chatCommand: CommandDefinition = {
     }
   },
 };
+
+async function appendChatCostLedgerBestEffort(
+  costTracker: CostTracker,
+  sessionId: string,
+  exitCode: number,
+): Promise<void> {
+  if (!costTracker.hasUsage()) return;
+  try {
+    await appendCostLedgerEntry({
+      entry: {
+        schemaVersion: 1,
+        createdAt: new Date().toISOString(),
+        command: "chat",
+        sessionId,
+        exitCode,
+        snapshot: costTracker.snapshot(),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[cost] failed to write ledger: ${message}\n`);
+  }
+}
 
 /** 新会话：生成 sessionId + 记下 model；不写盘，等用户 /save 时落地。 */
 function newSession(model: string): ChatSession {
