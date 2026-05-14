@@ -6,6 +6,7 @@
       "name": "nova-code",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.92.0",
+        "marked": "^18.0.3",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.4.13",
@@ -44,6 +45,8 @@
     "bun-types": ["bun-types@1.3.13", "https://registry.npmmirror.com/bun-types/-/bun-types-1.3.13.tgz", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
 
     "json-schema-to-ts": ["json-schema-to-ts@3.1.1", "https://registry.npmmirror.com/json-schema-to-ts/-/json-schema-to-ts-3.1.1.tgz", { "dependencies": { "@babel/runtime": "^7.18.3", "ts-algebra": "^2.0.0" } }, "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g=="],
+
+    "marked": ["marked@18.0.3", "https://registry.npmmirror.com/marked/-/marked-18.0.3.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-7VT90JOkDeaRWpfjOReRGPEKn0ecdARBkDGL+tT1wZY0efPPqkUxLUSmzy/C7TIylQYJC9STISEsCHrqb/7VIA=="],
 
     "ts-algebra": ["ts-algebra@2.0.0", "https://registry.npmmirror.com/ts-algebra/-/ts-algebra-2.0.0.tgz", {}, "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw=="],
 

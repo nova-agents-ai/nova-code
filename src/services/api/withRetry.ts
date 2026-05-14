@@ -19,6 +19,7 @@
  */
 
 import { AbortError } from "../../errors/index.ts";
+import { logEvent } from "../analytics/index.ts";
 import { getRetryAfterMs, isAbortLikeError, isRetryableError } from "./errorUtils.ts";
 
 /**
@@ -98,11 +99,19 @@ export async function withRetry<T>(
       }
 
       // 计算延迟：优先用服务端 Retry-After，否则指数退避 + 抖动
+      const retryAfterMs = getRetryAfterMs(error);
       const delay = computeDelayMs({
         attempt,
         initialDelayMs,
         maxDelayMs,
-        retryAfterMs: getRetryAfterMs(error),
+        retryAfterMs,
+      });
+
+      logEvent("tengu_api_retry", {
+        attempt,
+        nextDelayMs: delay,
+        retryAfter: retryAfterMs ?? null,
+        reason: error instanceof Error ? error.name : "unknown",
       });
 
       await sleep(delay, signal);

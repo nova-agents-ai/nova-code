@@ -5,6 +5,7 @@
  */
 
 import { clearCommand } from "./clear.ts";
+import { compactCommand } from "./compact.ts";
 import { exitCommand } from "./exit.ts";
 import { makeHelpCommand } from "./help.ts";
 import { loadCommand } from "./load.ts";
@@ -19,6 +20,7 @@ const nonHelpCommands: readonly SlashCommand[] = [
   saveCommand,
   loadCommand,
   permissionsCommand,
+  compactCommand,
 ];
 
 // getter 闭包：保证 help 拿到的是整份 builtinSlashCommands（含 help）

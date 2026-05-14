@@ -91,5 +91,26 @@ export function renderAgentEvent(event: AgentEvent, io: ReplIO, state: RenderSta
         io.stderr(`[permission] allowed & saved to ${event.persisted}: ${event.toolName}\n`);
       }
       break;
+    case "compact_start":
+      // M4：自动 / 手动 compact 即将开始。在 stderr 打一行进度提示。
+      // 如果前面正在写正文，先补换行避免视觉拥挤。
+      if (state.inAssistantText) {
+        io.stdout("\n");
+        state.inAssistantText = false;
+      }
+      io.stderr(
+        `[compact] ${event.trigger === "auto" ? "auto-" : ""}compacting (≈ ${event.preCompactTokenCount} tokens)\n`,
+      );
+      break;
+    case "compact_end":
+      // M4：成功打 "compacted from X to Y tokens"，失败打 "compact failed: <msg>"
+      if (event.error !== undefined) {
+        io.stderr(`[compact] failed: ${event.error}\n`);
+      } else if (event.postCompactTokenCount !== undefined) {
+        io.stderr(
+          `[compact] done: ${event.preCompactTokenCount} → ${event.postCompactTokenCount} tokens\n`,
+        );
+      }
+      break;
   }
 }

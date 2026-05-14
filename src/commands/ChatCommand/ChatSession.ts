@@ -24,7 +24,10 @@
  */
 
 import type { ResolvedConfig } from "../../config/config.ts";
-import { type LlmLogSink, runAgentLoop } from "../../QueryEngine.ts";
+import { buildSystemPrompt, type LlmLogSink, runAgentLoop, toSdkTool } from "../../QueryEngine.ts";
+import { createAnthropicClient } from "../../services/api/client.ts";
+import type { AutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
+import { compactConversation } from "../../services/compact/compact.ts";
 import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
@@ -68,6 +71,38 @@ export interface ChatTurnContext {
   readonly permissionStore?: PermissionStore;
   readonly permissionProvider?: PermissionProvider;
   readonly cwd?: string;
+  // ── M4 Compact 注入（全部可选，透传给 runAgentLoop）─────────────────────
+  readonly autoCompactEnabled?: boolean;
+  readonly autoCompactTracking?: AutoCompactTrackingState;
+  readonly projectInstructions?: string;
+}
+
+/**
+ * /compact 斜杠命令调用 ChatSession.compact() 时的上下文。
+ *
+ * 设计动机：与 sendTurn 用同一个 ChatTurnContext 太重 —— compact 不需要
+ * tools / permissionStore / projectInstructions（compact 调用本身不带工具），
+ * 单独定义专用 ctx 更清晰。
+ */
+export interface ChatCompactContext {
+  readonly config: ResolvedConfig;
+  readonly signal: AbortSignal;
+  readonly llmLogSink?: LlmLogSink;
+  /** Forked-agent cache 共享：与主循环相同的 system prompt。 */
+  readonly systemPrompt?: string;
+  /** Forked-agent cache 共享：启动时加载好的 CLAUDE.md / project instructions。 */
+  readonly projectInstructions?: string;
+  /** Forked-agent cache 共享：与主循环相同的工具定义。 */
+  readonly tools?: readonly Tool[];
+  /** 测试注入：覆盖 Anthropic client；不传时按 config 创建。 */
+  readonly clientFactory?: typeof createAnthropicClient;
+}
+
+/** ChatSession.compact() 的返回，便于 /compact 命令打回执给用户。 */
+export interface ChatCompactOutcome {
+  readonly preCompactTokenCount: number;
+  readonly postCompactTokenCount: number;
+  readonly compactedMessages: number;
 }
 
 export class ChatSession {
@@ -112,6 +147,15 @@ export class ChatSession {
         ? { permissionProvider: ctx.permissionProvider }
         : {}),
       ...(ctx.cwd !== undefined ? { cwd: ctx.cwd } : {}),
+      ...(ctx.autoCompactEnabled !== undefined
+        ? { autoCompactEnabled: ctx.autoCompactEnabled }
+        : {}),
+      ...(ctx.autoCompactTracking !== undefined
+        ? { autoCompactTracking: ctx.autoCompactTracking }
+        : {}),
+      ...(ctx.projectInstructions !== undefined
+        ? { projectInstructions: ctx.projectInstructions }
+        : {}),
     });
 
     // 累积本轮待 flush 的 tool_result 块；下一个 turn_start 到达时打包成 user 消息
@@ -158,6 +202,58 @@ export class ChatSession {
   /** 清空对话历史（`/clear` 命令用）。meta 不变。 */
   clear(): void {
     this.messages = [];
+  }
+
+  /**
+   * 强制压缩当前对话（`/compact` 命令用）。
+   *
+   * 与 sendTurn 同样的"快照 + 成功才提交"语义：compact 中途抛错（abort / LLM
+   * error / 不足 N 条消息）则 messages 保持原状，不会出现"半压缩"中间态。
+   *
+   * 成功时直接重置 messages = [summaryMessage]（claude-code /compact 同语义）。
+   *
+   * 不接完整 ChatTurnContext —— compact 不需要权限；但会复用主循环的
+   * system/tools 让 forked-agent compact 请求与主会话共享 prompt cache。
+   */
+  async compact(ctx: ChatCompactContext, customInstructions?: string): Promise<ChatCompactOutcome> {
+    if (this.messages.length === 0) {
+      throw new Error("No messages to compact yet.");
+    }
+
+    const clientFactory = ctx.clientFactory ?? createAnthropicClient;
+    const client = clientFactory(ctx.config);
+
+    // 在调用前先记下原 messages 的副本；compactConversation 抛错时不会动 this.messages
+    const snapshot = this.messages;
+    const result = await compactConversation({
+      messages: snapshot,
+      client,
+      model: ctx.config.model,
+      trigger: "manual",
+      ...(customInstructions !== undefined ? { customInstructions } : {}),
+      signal: ctx.signal,
+      ...(ctx.llmLogSink !== undefined ? { llmLogSink: ctx.llmLogSink } : {}),
+      ...(ctx.systemPrompt !== undefined || ctx.projectInstructions !== undefined
+        ? {
+            systemPrompt: buildSystemPrompt({
+              ...(ctx.systemPrompt !== undefined ? { systemPrompt: ctx.systemPrompt } : {}),
+              ...(ctx.projectInstructions !== undefined
+                ? { projectInstructions: ctx.projectInstructions }
+                : {}),
+            }),
+          }
+        : {}),
+      ...(ctx.tools !== undefined ? { sdkTools: ctx.tools.map(toSdkTool) } : {}),
+    });
+
+    // 走到这里说明 compact 成功 → 原子替换
+    const compactedCount = snapshot.length;
+    this.messages = [result.summaryMessage];
+    return {
+      preCompactTokenCount: result.preCompactTokenCount,
+      postCompactTokenCount: result.postCompactTokenCount,
+      compactedMessages: compactedCount,
+    };
   }
 
   /**

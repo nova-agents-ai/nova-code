@@ -49,6 +49,7 @@ import type {
   PermissionRuleSource,
   PermissionRuleWithSource,
 } from "../../types/permissions.ts";
+import { logEvent } from "../analytics/index.ts";
 import { BASH_TOOL_NAME, matchBashRule } from "./bashRuleMatcher.ts";
 import { checkDenyPatterns, extractBashCommand } from "./dangerousPatterns.ts";
 import { extractFilePath, isFileWriteToolName, matchFileRule } from "./fileRuleMatcher.ts";
@@ -96,9 +97,26 @@ export interface PermissionEvaluationResult {
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * 评估一次 tool 调用的权限决策。纯函数，无副作用。
+ * 评估一次 tool 调用的权限决策。纯函数（埋点除外，logEvent 失败永不抛）。
+ *
+ * 内部步骤：先调 evaluatePermissionImpl 拿决策，再发 tengu_internal_record_permission_context
+ * 埋点。这样 7 步流水线主体保持纯函数语义，日志写在边界。
  */
 export function evaluatePermission(input: PermissionEvaluationInput): PermissionEvaluationResult {
+  const result = evaluatePermissionImpl(input);
+  // 按 claude-code 同款事件名记一条；payload 不含命令本体，仅打 tool/mode/decision/原因摘要
+  logEvent("tengu_internal_record_permission_context", {
+    toolName: input.toolName,
+    mode: input.mode,
+    decision: result.decision,
+    requiresApproval: input.requiresApproval,
+    matchedSource: result.matchedRule?.source ?? null,
+    denyPattern: result.denyPatternName ?? null,
+  });
+  return result;
+}
+
+function evaluatePermissionImpl(input: PermissionEvaluationInput): PermissionEvaluationResult {
   const { mode, toolName, requiresApproval, input: toolInput, rules, cwd } = input;
 
   // ── Step 1: DENY_PATTERNS（Bash 独享；bypass 不绕过）

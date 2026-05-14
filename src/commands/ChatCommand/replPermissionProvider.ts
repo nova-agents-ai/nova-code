@@ -12,6 +12,7 @@
  * 不依赖真实 readline / TTY。
  */
 
+import { logEvent } from "../../services/analytics/index.ts";
 import type {
   PermissionProvider,
   PermissionRequest,
@@ -41,9 +42,23 @@ export function createReplPermissionProvider(deps: ReplPermissionProviderDeps): 
       // 循环等有效输入；空行 / EOF / 无效输入 → 安全从严，走 deny
       while (true) {
         const line = await deps.readLine("  选择 1-5（回车=5 deny）: ");
-        if (line === null) return "deny";
+        if (line === null) {
+          logEvent("tengu_permission_request_option_selected", {
+            toolName: req.toolName,
+            choice: "deny",
+            via: "eof",
+          });
+          return "deny";
+        }
         const choice = parseChoice(line.trim());
-        if (choice !== undefined) return choice;
+        if (choice !== undefined) {
+          logEvent("tengu_permission_request_option_selected", {
+            toolName: req.toolName,
+            choice,
+            via: "menu",
+          });
+          return choice;
+        }
         deps.io.stderr("  无效输入，请输入 1-5。\n");
       }
     },

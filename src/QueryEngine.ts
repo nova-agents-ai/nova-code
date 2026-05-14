@@ -36,8 +36,16 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError, ToolExecutionError } from "./errors/index.ts";
+import { logEvent } from "./services/analytics/index.ts";
 import { createAnthropicClient } from "./services/api/client.ts";
 import { LLMApiError } from "./services/api/errors.ts";
+import {
+  type AutoCompactTrackingState,
+  autoCompactIfNeeded,
+  MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+  shouldAutoCompact,
+} from "./services/compact/autoCompact.ts";
+import { tokenCountWithEstimation } from "./services/compact/tokens.ts";
 import { BASH_TOOL_NAME } from "./services/permissions/bashRuleMatcher.ts";
 import { extractBashCommand } from "./services/permissions/dangerousPatterns.ts";
 import { extractFilePath, isFileWriteToolName } from "./services/permissions/fileRuleMatcher.ts";
@@ -132,13 +140,47 @@ export interface AgentLoopParams {
   readonly permissionProvider?: PermissionProvider;
   /** 用于 file glob 相对化；不传时 evaluatePermission 会 fallback 到 process.cwd()。 */
   readonly cwd?: string;
+
+  // ── M4 Compact 注入（5 个字段同进同出）────────────────────────────────
+  //
+  // 设计原则：全部可选，不传时主循环行为与 M3 完全一致（无自动 compact、无
+  // CLAUDE.md 注入）。这样保证 M3 既有测试不需要改。
+  //
+  // 一旦传入 autoCompactTracking + autoCompactEnabled=true，主循环会在每轮
+  // streamOneTurn 之前调 autoCompactIfNeeded，并按需替换内部 messages 数组、
+  // 发 compact_start / compact_end 事件。
+
+  /** 是否启用自动 compact（true 时配合 autoCompactTracking 才生效）。 */
+  readonly autoCompactEnabled?: boolean;
+  /** 自动 compact 的可变 tracking 状态；调用方通常按"每会话一份"持有。 */
+  readonly autoCompactTracking?: AutoCompactTrackingState;
+  /**
+   * 已加载好的 CLAUDE.md 拼成的字符串（4 层合并 + @include）。不传 = 不注入。
+   * 启动时由 chat / ask 命令加载并透传，避免每轮 LLM 调用都重新读盘。
+   */
+  readonly projectInstructions?: string;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
-const DEFAULT_SYSTEM_PROMPT =
+export const DEFAULT_SYSTEM_PROMPT =
   "You are nova-code, a command-line coding assistant. " +
   "Use the provided tools to inspect the user's project before answering questions about code. " +
   "Be concise and direct.";
+
+/**
+ * 构造实际发给 SDK 的 system prompt。CLAUDE.md / project instructions 固定追加在
+ * base prompt 之后，保持主循环与 compact forked-agent 请求的 cache key 一致。
+ */
+export function buildSystemPrompt(params: {
+  readonly systemPrompt?: string;
+  readonly projectInstructions?: string;
+}): string {
+  const baseSystemPrompt = params.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  if (params.projectInstructions === undefined || params.projectInstructions.trim() === "") {
+    return baseSystemPrompt;
+  }
+  return `${baseSystemPrompt}\n\n${params.projectInstructions}`;
+}
 
 /**
  * 执行一次完整的 agent loop。
@@ -152,7 +194,13 @@ export async function* runAgentLoop(
   params: AgentLoopParams,
 ): AsyncGenerator<AgentEvent, NovaMessage, void> {
   const { config, userPrompt, tools } = params;
-  const systemPrompt = params.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  // M4：projectInstructions 拼到 system prompt 末尾（CLAUDE.md 4 层）
+  const systemPrompt = buildSystemPrompt({
+    ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+    ...(params.projectInstructions !== undefined
+      ? { projectInstructions: params.projectInstructions }
+      : {}),
+  });
   const signal = params.signal ?? new AbortController().signal;
   const client = params.client ?? createAnthropicClient(config);
 
@@ -174,6 +222,30 @@ export async function* runAgentLoop(
       throw new AbortError();
     }
 
+    // M4：每轮 streamOneTurn 之前检查是否需要自动 compact
+    // 仅在调用方注入了 autoCompactTracking + autoCompactEnabled=true 时启用
+    if (params.autoCompactEnabled === true && params.autoCompactTracking !== undefined) {
+      const tracking = params.autoCompactTracking;
+      // 进入 autoCompactIfNeeded 之前先发 compact_start 让 UI 能展示
+      // —— 但只有真的会触发才发；先做一个不调 LLM 的便宜判断
+      const outcome = yield* tryAutoCompact({
+        messages,
+        client,
+        model: config.model,
+        tracking,
+        signal,
+        llmLogSink: params.llmLogSink,
+        // forked-agent cache 共享：把主循环的 system + tools 透给 compact 请求
+        systemPrompt,
+        sdkTools,
+      });
+      if (outcome.replaced) {
+        // 被替换的 messages 数组：清空再 push summary message
+        messages.length = 0;
+        messages.push(outcome.summaryMessage);
+      }
+    }
+
     yield { type: "turn_start", turn };
 
     const { assistantMessage, stopReason } = yield* streamOneTurn({
@@ -187,7 +259,12 @@ export async function* runAgentLoop(
       llmLogSink: params.llmLogSink,
     });
 
+    // M4：assistantMessage 自身已携带 usage（streamOneTurn 内部挂的），
+    // walk-back-from-end 算法直接走 messages 数组即可，无需单独维护 anchor
     messages.push(assistantMessage);
+    if (params.autoCompactTracking !== undefined) {
+      params.autoCompactTracking.turnCounter += 1;
+    }
 
     yield {
       type: "turn_end",
@@ -258,6 +335,7 @@ interface StreamOneTurnParams {
 }
 
 interface StreamOneTurnResult {
+  /** assistantMessage 自身已携带 usage（M4 起内嵌到 NovaMessage 上）。 */
   readonly assistantMessage: NovaMessage;
   readonly stopReason: AgentStopReasonEnum;
 }
@@ -291,6 +369,13 @@ async function* streamOneTurn(
     }
   }
 
+  logEvent("tengu_api_query", {
+    turn,
+    model: config.model,
+    messageCount: messages.length,
+    hasTools: sdkTools.length > 0,
+  });
+
   const startedAt = Date.now();
   const stream = client.messages.stream(requestParams, { signal });
 
@@ -307,6 +392,12 @@ async function* streamOneTurn(
     }
   } catch (error) {
     writeLlmError(llmLogSink, turn, Date.now() - startedAt, error);
+    logEvent("tengu_api_error", {
+      turn,
+      durationMs: Date.now() - startedAt,
+      stage: "stream",
+      reason: error instanceof Error ? error.name : "unknown",
+    });
     throw normalizeSdkError(error);
   }
 
@@ -316,8 +407,16 @@ async function* streamOneTurn(
     final = await stream.finalMessage();
   } catch (error) {
     writeLlmError(llmLogSink, turn, Date.now() - startedAt, error);
+    logEvent("tengu_api_error", {
+      turn,
+      durationMs: Date.now() - startedAt,
+      stage: "finalMessage",
+      reason: error instanceof Error ? error.name : "unknown",
+    });
     throw normalizeSdkError(error);
   }
+
+  const durationMs = Date.now() - startedAt;
 
   // 向 llm 日志写响应
   if (llmLogSink !== undefined) {
@@ -327,7 +426,7 @@ async function* streamOneTurn(
         turn,
         model: config.model,
         stopReason: final.stop_reason,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         message: final,
       });
     } catch {
@@ -335,8 +434,31 @@ async function* streamOneTurn(
     }
   }
 
+  logEvent("tengu_api_success", {
+    turn,
+    model: config.model,
+    durationMs,
+    stopReason: final.stop_reason ?? "unknown",
+    inputTokens: final.usage?.input_tokens ?? 0,
+    outputTokens: final.usage?.output_tokens ?? 0,
+  });
+
+  // M4: 把 usage 内嵌到 assistantMessage 自身（claude-code 同款）
+  const baseAssistant = fromSdkMessage(final);
+  const assistantMessage: NovaMessage =
+    final.usage !== undefined
+      ? {
+          ...baseAssistant,
+          usage: {
+            input_tokens: final.usage.input_tokens,
+            cache_creation_input_tokens: final.usage.cache_creation_input_tokens ?? null,
+            cache_read_input_tokens: final.usage.cache_read_input_tokens ?? null,
+            output_tokens: final.usage.output_tokens,
+          },
+        }
+      : baseAssistant;
   return {
-    assistantMessage: fromSdkMessage(final),
+    assistantMessage,
     stopReason: mapStopReason(final.stop_reason),
   };
 }
@@ -626,7 +748,8 @@ async function executeOneTool(
 // 类型转换：nova ↔ SDK
 // ────────────────────────────────────────────────────────────────────────────
 
-function toSdkTool(tool: Tool): SdkTool {
+/** 把 nova Tool 定义转换为 Anthropic SDK tools 参数。 */
+export function toSdkTool(tool: Tool): SdkTool {
   return {
     name: tool.name,
     description: tool.description,
@@ -763,4 +886,79 @@ function describeToolError(reason: unknown, fallbackToolName: string): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// M4：自动 compact 触发的封装
+// ────────────────────────────────────────────────────────────────────────────
+
+interface TryAutoCompactParams {
+  readonly messages: readonly NovaMessage[];
+  readonly client: Anthropic;
+  readonly model: string;
+  readonly tracking: AutoCompactTrackingState;
+  readonly signal: AbortSignal;
+  readonly llmLogSink?: LlmLogSink;
+  /** Forked-agent cache 共享：与主循环相同的 system prompt。 */
+  readonly systemPrompt: string;
+  /** Forked-agent cache 共享：与主循环相同的工具定义。 */
+  readonly sdkTools: readonly SdkTool[];
+}
+
+type TryAutoCompactOutcome =
+  | { readonly replaced: true; readonly summaryMessage: NovaMessage }
+  | { readonly replaced: false };
+
+/**
+ * 在当前轮 streamOneTurn 之前判定 + 触发自动 compact，并把 compact_start /
+ * compact_end 事件透传给外层的 yield。
+ *
+ * 设计选择：把"是否需要 compact"的判断封装到 autoCompactIfNeeded 内（含 circuit
+ * breaker、阈值检查），本函数只负责"如果触发了，发对应事件 + 把 summary 传出去"。
+ */
+async function* tryAutoCompact(
+  params: TryAutoCompactParams,
+): AsyncGenerator<AgentEvent, TryAutoCompactOutcome, void> {
+  const { messages, client, model, tracking, signal, llmLogSink, systemPrompt, sdkTools } = params;
+
+  // 同步预判：阈值未到 / circuit breaker 触发 → 静默跳过，连 compact_start 都不发
+  if (tracking.consecutiveFailures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES) {
+    return { replaced: false };
+  }
+  const willCompact = shouldAutoCompact({
+    messages,
+    model,
+    enabled: true,
+  });
+  if (!willCompact) return { replaced: false };
+
+  const preCount = tokenCountWithEstimation(messages);
+  yield { type: "compact_start", trigger: "auto", preCompactTokenCount: preCount };
+
+  const outcome = await autoCompactIfNeeded({
+    messages,
+    client,
+    model,
+    tracking,
+    enabled: true,
+    signal,
+    ...(llmLogSink !== undefined ? { llmLogSink } : {}),
+    systemPrompt,
+    sdkTools,
+  });
+
+  yield {
+    type: "compact_end",
+    trigger: "auto",
+    preCompactTokenCount: outcome.preCompactTokenCount ?? preCount,
+    ...(outcome.postCompactTokenCount !== undefined
+      ? { postCompactTokenCount: outcome.postCompactTokenCount }
+      : {}),
+    ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+  };
+
+  if (outcome.wasCompacted && outcome.summaryMessage !== undefined) {
+    return { replaced: true, summaryMessage: outcome.summaryMessage };
+  }
+  return { replaced: false };
 }
