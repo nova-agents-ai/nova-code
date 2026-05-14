@@ -97,6 +97,9 @@ describe("runCli - 顶层选项", () => {
     expect(output).toContain("hello");
     expect(output).toContain("echo");
     expect(output).toContain("ask");
+    expect(output).toContain("cost");
+    expect(output).toContain("config");
+    expect(output).toContain("init");
   });
 });
 

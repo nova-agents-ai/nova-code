@@ -13,7 +13,10 @@
 
 import { askCommand } from "./commands/AskCommand/AskCommand.ts";
 import { chatCommand } from "./commands/ChatCommand/ChatCommand.ts";
+import { configCommand } from "./commands/ConfigCommand/ConfigCommand.ts";
+import { costCommand } from "./commands/CostCommand/CostCommand.ts";
 import { helloCommand } from "./commands/HelloCommand/HelloCommand.ts";
+import { initCommand } from "./commands/InitCommand/InitCommand.ts";
 import type { CommandDefinition } from "./commands/types.ts";
 
 // 兼容 re-export：历史调用方（如 commands.test.ts）直接从本文件按名引用这些 helper，
@@ -29,6 +32,9 @@ export const builtinCommands: readonly CommandDefinition[] = [
   helloCommand,
   askCommand,
   chatCommand,
+  costCommand,
+  configCommand,
+  initCommand,
 ];
 
 /**

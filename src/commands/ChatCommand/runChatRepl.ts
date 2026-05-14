@@ -26,8 +26,10 @@ import {
   type AutoCompactTrackingState,
   createAutoCompactTrackingState,
 } from "../../services/compact/autoCompact.ts";
+import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
+import type { AgentEvent, ApiUsage } from "../../types/message.ts";
 import type { PermissionMode } from "../../types/permissions.ts";
 import type { DebugSink } from "../AskCommand/debugSink.ts";
 import type { ChatSession } from "./ChatSession.ts";
@@ -70,6 +72,8 @@ export interface RunChatReplParams {
   readonly autoCompactEnabled?: boolean;
   /** M4：自动 compact tracking；不注入则 runChatRepl 自动构造一份。 */
   readonly autoCompactTracking?: AutoCompactTrackingState;
+  /** M5：会话级 cost tracker；不注入则不打印/不累计费用。 */
+  readonly costTracker?: CostTracker;
 }
 
 /**
@@ -103,6 +107,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     permissionStore,
     permissionMode,
     projectInstructions,
+    costTracker,
   } = params;
   // M4: 自动 compact 默认开启；调用方可通过 autoCompactEnabled=false 关闭
   const autoCompactEnabled = params.autoCompactEnabled !== false;
@@ -220,6 +225,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       const line = await readLine("> ");
       if (line === null) {
         // stdin EOF / rl close → 正常退出
+        printCostSummary(costTracker, io);
         io.stderr("\n");
         return 0;
       }
@@ -255,12 +261,14 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
             projectInstructions !== undefined ? { projectInstructions } : {},
           ),
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
+          ...(costTracker !== undefined ? { costTracker } : {}),
         },
       });
       // 一旦 dispatch 完成 → 重置 phase 回 idle（无论 dispatch.handled 与否）
       phaseRef.current = { kind: "idle" };
       if (dispatch.handled) {
         if (dispatch.result.action === "exit") {
+          printCostSummary(costTracker, io);
           return dispatch.result.exitCode ?? 0;
         }
         continue;
@@ -288,6 +296,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         });
         for await (const event of gen) {
           debugSink.write(event);
+          recordCostEvent(event, config.model, costTracker);
           renderAgentEvent(event, io, renderState);
         }
       } catch (error) {
@@ -300,6 +309,32 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     process.removeListener("SIGINT", processSigintHandler);
     rl.close();
   }
+}
+
+function recordCostEvent(
+  event: AgentEvent,
+  model: string,
+  costTracker: CostTracker | undefined,
+): void {
+  if (costTracker === undefined) return;
+  if (event.type === "turn_end" && isApiUsage(event.message?.usage)) {
+    costTracker.recordUsage(model, event.message.usage);
+    return;
+  }
+  if (event.type === "compact_end" && isApiUsage(event.usage)) {
+    costTracker.recordUsage(model, event.usage);
+  }
+}
+
+function isApiUsage(value: unknown): value is ApiUsage {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const usage = value as Record<string, unknown>;
+  return typeof usage["input_tokens"] === "number" && typeof usage["output_tokens"] === "number";
+}
+
+function printCostSummary(costTracker: CostTracker | undefined, io: ReplIO): void {
+  if (costTracker === undefined || !costTracker.hasUsage()) return;
+  io.stderr(`${formatChatCostSummary(costTracker.snapshot())}\n`);
 }
 
 /** 把 sendTurn 抛出的错误映射为用户可见的一行提示；REPL 不退出。 */

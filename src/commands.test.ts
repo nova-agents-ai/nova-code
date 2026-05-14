@@ -52,6 +52,9 @@ describe("findCommand", () => {
   test("能找到所有内置命令", () => {
     expect(findCommand("hello")?.name).toBe("hello");
     expect(findCommand("ask")?.name).toBe("ask");
+    expect(findCommand("cost")?.name).toBe("cost");
+    expect(findCommand("config")?.name).toBe("config");
+    expect(findCommand("init")?.name).toBe("init");
   });
 
   test("找不到时返回 undefined", () => {

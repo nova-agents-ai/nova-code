@@ -12,6 +12,7 @@
 
 import type { ConfigSource, ResolvedConfig } from "../../../config/config.ts";
 import type { LlmLogSink } from "../../../QueryEngine.ts";
+import type { CostTracker } from "../../../services/cost/index.ts";
 import type { PermissionStore } from "../../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../../Tool.ts";
 import type { PermissionMode } from "../../../types/permissions.ts";
@@ -77,6 +78,7 @@ export interface SlashContext {
     readonly systemPrompt?: string;
     readonly projectInstructions?: string;
     readonly tools?: readonly Tool[];
+    readonly costTracker?: CostTracker;
   };
 }
 

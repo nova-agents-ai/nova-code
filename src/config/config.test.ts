@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { ConfigError } from "../errors/index.ts";
 import {
   getConfigFilePath,
+  getCostLedgerPath,
   getLogsDirPath,
   getSessionsDirPath,
   loadConfig,
@@ -57,6 +58,13 @@ describe("config - getSessionsDirPath", () => {
     expect(path.endsWith("/.nova-code/sessions") || path.endsWith("\\.nova-code\\sessions")).toBe(
       true,
     );
+  });
+});
+
+describe("config - getCostLedgerPath", () => {
+  test("以 ~/.nova-code/cost.jsonl 为路径", () => {
+    const path = getCostLedgerPath({ homeDir: "/fake/home" });
+    expect(path).toMatch(/[\\/]fake[\\/]home[\\/]\.nova-code[\\/]cost\.jsonl$/);
   });
 });
 

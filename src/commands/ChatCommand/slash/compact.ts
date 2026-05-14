@@ -44,6 +44,7 @@ export const compactCommand: SlashCommand = {
         },
         customInstructions === "" ? undefined : customInstructions,
       );
+      chatRuntime.costTracker?.recordUsage(chatRuntime.config.model, outcome.compactionUsage);
       io.print(
         `已压缩 ${outcome.compactedMessages} 条消息 → 1 条 summary` +
           ` (≈ ${outcome.preCompactTokenCount} → ${outcome.postCompactTokenCount} tokens)\n`,

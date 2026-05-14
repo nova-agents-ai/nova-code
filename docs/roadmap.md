@@ -1,8 +1,8 @@
-# nova-code 路线图 v2.5
+# nova-code 路线图 v2.6
 
 > 渐进对齐 → 改进 → 超越
 >
-> 最后更新：2026-05-12
+> 最后更新：2026-05-14
 
 ---
 
@@ -157,17 +157,28 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 - ChatSession 新增 `compact()` 方法（快照+成功才提交的原子语义）
 - `/compact` 斜杠命令（支持自定义指令）+ SlashContext 增加 chatRuntime 字段
 - AgentEvent 新增 `compact_start` / `compact_end` 两类；renderAgentEvent + runAskWithLLM 同步渲染
-- mockClient 扩展：检测 compact 请求（无 tools）+ NOVA_MOCK_INFLATE_USAGE 触发阈值 + system 字段落盘
-- 测试：87 条新单测 + 4 条 e2e（自动 / /compact / 50 轮 / CLAUDE.md @include）；总计 576 条全绿
+- mockClient 扩展：按 prompt 特征检测 compact 请求（请求仍带主循环同款 tools + `tool_choice:none`）+ NOVA_MOCK_INFLATE_USAGE 触发阈值 + system 字段落盘
+- 测试：约 105 条新单测 + 4 条 e2e（自动 / /compact / 50 轮 / CLAUDE.md @include）；M4 完成时全绿
 - 详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`
 
-### M5 — Cost、Config CLI、init
+### M5 — Cost、Config CLI、init ✅（已完成）
 
 **新增**：`nova-code cost` / `config get|set` / `init`（生成 CLAUDE.md）
 
 **参照**：`claude-code/src/cost-tracker.ts` + `commands/{cost,config,init}/`
 
-**DoD**：chat 结束打印 token 消耗与估算费用
+**DoD**：chat 结束打印 token 消耗与估算费用 ✅
+
+**交付摘要**：
+- `src/services/cost/` 4 文件（pricing 静态价格表 / CostTracker 累计器 / cost ledger JSONL / index）
+- chat 退出时打印 `[cost] Total cost` / usage by model，并 best-effort 追加 `~/.nova-code/cost.jsonl`
+- 普通 turn、自动 compact、手动 `/compact` 三类 LLM 调用都进入同一份 `CostTracker`
+- `nova-code cost [--json]` 汇总历史 chat ledger；空 ledger 安全显示 0 usage
+- `nova-code config get|set` 读写 `~/.nova-code/config.json`，支持 apiKey/baseURL/model/maxTokens/maxTurns；apiKey 输出脱敏
+- `nova-code init [--force]` 生成最小 `CLAUDE.md` 模板，默认拒绝覆盖
+- AgentEvent `compact_end` 新增可选 `usage?: ApiUsage`，向后兼容旧消费者
+- 测试：新增 cost/config/init 单测 + `m5-e2e-cost`；全量 616 tests 通过
+- 详见 `docs/design/M5-cost-config-init.md`、使用手册 `docs/manual/M5-usage-guide.md`、实现架构 `docs/architecture/M5-architecture.md`
 
 ### M6 — TodoWrite 工具
 
@@ -456,6 +467,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.6**（2026-05-14）：M5 Cost / Config CLI / init 落地。新增 `src/services/cost`（静态 Anthropic 价格快照、`CostTracker`、`~/.nova-code/cost.jsonl` ledger）；chat 退出打印 `[cost]` 摘要并记录普通 turn + auto compact + manual `/compact` 的 usage；新增 `nova-code cost [--json]`、`nova-code config get|set`（apiKey 脱敏、正整数校验）、`nova-code init [--force]`（最小 CLAUDE.md 模板）；`compact_end` 事件可选携带 `usage?: ApiUsage`；新增 M5 设计文档 / 使用手册 / 架构快照；全量 616 tests 通过。
 - **v2.5**（2026-05-12）：M4 上下文压缩 + CLAUDE.md 注入落地。阈值 167K 自动 compact + circuit breaker（失败 3 次停用） + `/compact` 手动 + claude-code 同款 prompt 模板 + token 锚点估算（SDK usage + chars/4）；CLAUDE.md 4 层（managed → user → project chain → local chain）+ `@include` 递归（深度上限 5 + 循环检测）启动时一次注入 system prompt；@include 解析与 HTML comment 剥离用 marked Lexer 复刻 claude-code 同款（支持 inline @path、fragment 剥离、escaped space、TEXT_FILE_EXTENSIONS 白名单）；新增 `services/analytics` 子系统复刻 claude-code 的 `logEvent(name, payload)` 接口（环形 buffer + 可选 JSONL 落盘 + `NOVA_DISABLE_TELEMETRY` / `NOVA_TELEMETRY_FILE` 开关），事件名沿用 `tengu_*` 前缀；新增 `compact_start` / `compact_end` AgentEvent；ChatSession.compact() 用快照+成功才提交避免半提交；partialCompact 同步落地作为 roadmap 失败信号回退方案；约 104 条新单测 + 4 条 e2e；详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`
 - **v2.4**（2026-05-04）：M3 权限与安全 milestone 落地：七步权限流水线 + 三层规则存储 + 4 档模式 + 5 档交互弹窗；`--dangerously-skip-permissions` / `/permissions` 斜杠命令；ask 默认 acceptEdits + headless auto-deny Provider；chat 默认 default + REPL 5 档 Provider；详见 `docs/design/M3-permissions.md`、使用手册 `docs/manual/M3-usage-guide.md`、实现架构 `docs/architecture/M3/README.md`
 - **v2.3**（2026-05-04）：修复 §7.0 表格中 `src/llm/` 应消失的时机表述（M1 → M1.5，与 M1 / M1.5 章节一致）；M1.5 在本版本落地：`src/llm/` 命名空间清空，顺带交付 `QueryEngine.ts` / `services/api/{client,errors,errorUtils,withRetry}` / `errors/` / `types/message.ts` / `commands/<X>Command/`；新增严谨单测的 `withRetry`（429/502/503/504/529 重试 + 网络错误 + Retry-After + AbortSignal）；新增 e2e 用例 m1-5-e2e-writeflow（真子进程 + 内嵌 mock server 覆盖 Grep→FileEdit→Bash 读写闭环）；debug sink 预埋 sessionId 参数为 M2 chat REPL 预留；详见 `docs/design/M1.5-refactor.md`
