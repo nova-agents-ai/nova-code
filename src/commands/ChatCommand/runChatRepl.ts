@@ -257,9 +257,10 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           config,
           signal: slashAbort.signal,
           tools,
-          systemPrompt: buildSystemPrompt(
-            projectInstructions !== undefined ? { projectInstructions } : {},
-          ),
+          systemPrompt: buildSystemPrompt({
+            toolNames: tools.map((tool) => tool.name),
+            ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+          }),
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
           ...(costTracker !== undefined ? { costTracker } : {}),
         },

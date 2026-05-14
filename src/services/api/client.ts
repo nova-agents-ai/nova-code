@@ -14,7 +14,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { ResolvedConfig } from "../../config/config.ts";
-import { createMockAnthropicClient } from "./mockClient.ts";
+import { createMockAnthropicClient, type MockScenario } from "./mockClient.ts";
 
 /**
  * 默认 SDK 内部重试次数。Anthropic SDK 自带指数退避，2 次重试足以覆盖
@@ -32,7 +32,7 @@ const DEFAULT_TIMEOUT_MS = 600_000;
  */
 export function createAnthropicClient(config: ResolvedConfig): Anthropic {
   if (process.env["NOVA_TRANSPORT"] === "mock") {
-    const scenario = process.env["NOVA_MOCK_SCENARIO"] === "edit-loop" ? "edit-loop" : "chat";
+    const scenario = parseMockScenario(process.env["NOVA_MOCK_SCENARIO"]);
     return createMockAnthropicClient({
       scenario,
       logFile: process.env["NOVA_MOCK_LOG_FILE"],
@@ -48,4 +48,9 @@ export function createAnthropicClient(config: ResolvedConfig): Anthropic {
     options.baseURL = config.baseURL;
   }
   return new Anthropic(options);
+}
+
+function parseMockScenario(value: string | undefined): MockScenario {
+  if (value === "edit-loop" || value === "todo-loop") return value;
+  return "chat";
 }

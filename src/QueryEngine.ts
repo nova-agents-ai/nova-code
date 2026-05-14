@@ -56,6 +56,8 @@ import {
 import { evaluatePermission } from "./services/permissions/permissionEngine.ts";
 import type { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
+import { TODO_WRITE_TOOL_NAME } from "./tools/TodoWriteTool/constants.ts";
+import { TODO_WRITE_SYSTEM_PROMPT } from "./tools/TodoWriteTool/prompt.ts";
 import { findTool } from "./tools.ts";
 import {
   type AgentEvent,
@@ -174,12 +176,24 @@ export const DEFAULT_SYSTEM_PROMPT =
 export function buildSystemPrompt(params: {
   readonly systemPrompt?: string;
   readonly projectInstructions?: string;
+  readonly toolNames?: readonly string[];
 }): string {
   const baseSystemPrompt = params.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const promptWithTools = shouldIncludeTodoWritePrompt(params)
+    ? `${baseSystemPrompt}${TODO_WRITE_SYSTEM_PROMPT}`
+    : baseSystemPrompt;
   if (params.projectInstructions === undefined || params.projectInstructions.trim() === "") {
-    return baseSystemPrompt;
+    return promptWithTools;
   }
-  return `${baseSystemPrompt}\n\n${params.projectInstructions}`;
+  return `${promptWithTools}\n\n${params.projectInstructions}`;
+}
+
+function shouldIncludeTodoWritePrompt(params: {
+  readonly systemPrompt?: string;
+  readonly toolNames?: readonly string[];
+}): boolean {
+  if (params.systemPrompt !== undefined) return false;
+  return params.toolNames?.includes(TODO_WRITE_TOOL_NAME) === true;
 }
 
 /**
@@ -197,6 +211,7 @@ export async function* runAgentLoop(
   // M4：projectInstructions 拼到 system prompt 末尾（CLAUDE.md 4 层）
   const systemPrompt = buildSystemPrompt({
     ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+    toolNames: tools.map((tool) => tool.name),
     ...(params.projectInstructions !== undefined
       ? { projectInstructions: params.projectInstructions }
       : {}),

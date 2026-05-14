@@ -14,6 +14,7 @@
  *     覆盖 claude-code 风格的"一次 turn 内先文字后工具"的常见序列
  */
 
+import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
 import type { AgentEvent } from "../../types/message.ts";
 
 /** REPL 与事件渲染之间的 I/O 抽象。 */
@@ -64,6 +65,8 @@ export function renderAgentEvent(event: AgentEvent, io: ReplIO, state: RenderSta
       // 工具失败：只在 stderr 打一行简短错误，不把整块 content 塞给用户
       if (event.isError) {
         io.stderr(`[tool] ${event.toolName} failed: ${event.content}\n`);
+      } else if (event.toolName === TODO_WRITE_TOOL_NAME) {
+        io.stderr(`${event.content}\n`);
       }
       break;
     case "done":
