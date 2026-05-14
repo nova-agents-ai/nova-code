@@ -122,6 +122,26 @@ describe("renderAgentEvent", () => {
     expect(err).toEqual([]);
   });
 
+  test("tool_result：TodoWrite 成功时展示 ASCII 任务表", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "tool_result",
+        toolUseId: "tu_1",
+        toolName: "TodoWrite",
+        content: "Current todos:\n[*] 1. Implementing changes",
+        isError: false,
+      },
+      io,
+      state,
+    );
+
+    expect(out).toEqual([]);
+    expect(err).toEqual(["Current todos:\n[*] 1. Implementing changes\n"]);
+  });
+
   test("tool_result：isError=true 时 stderr 打一行简短错误", () => {
     const { io, out, err } = makeIO();
     const state = createRenderState();

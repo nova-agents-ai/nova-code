@@ -19,7 +19,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError } from "./errors/index.ts";
-import { runAgentLoop } from "./QueryEngine.ts";
+import { buildSystemPrompt, runAgentLoop } from "./QueryEngine.ts";
 import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
 import { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
@@ -45,6 +45,8 @@ interface FakeStreamCall {
   readonly model: string;
   readonly hasTools: boolean;
   readonly messageCount: number;
+  /** 完整的 system prompt，用于断言 M6 TodoWrite guidance 注入。 */
+  readonly system?: unknown;
   /** 完整的 messages body（按 SDK 期望的 shape），用于断言历史消息前置正确。 */
   readonly messages: readonly unknown[];
 }
@@ -65,6 +67,7 @@ function makeFakeClient(turns: readonly ScriptedTurn[]): FakeClientHandle {
           model: string;
           messages: readonly unknown[];
           tools?: readonly unknown[];
+          system?: unknown;
         },
         _options?: unknown,
       ) => {
@@ -79,6 +82,7 @@ function makeFakeClient(turns: readonly ScriptedTurn[]): FakeClientHandle {
           model: body.model,
           hasTools: body.tools !== undefined && body.tools.length > 0,
           messageCount: body.messages.length,
+          system: body.system,
           messages: body.messages,
         });
         return makeFakeStream(turn);
@@ -206,6 +210,31 @@ async function collectEvents(
   }
   return events;
 }
+
+describe("buildSystemPrompt - M6 TodoWrite guidance", () => {
+  test("TodoWrite 可用时，在默认 system prompt 后追加工具使用引导", () => {
+    const prompt = buildSystemPrompt({ toolNames: ["TodoWrite"] });
+
+    expect(prompt).toContain("You are nova-code");
+    expect(prompt).toContain("## TodoWrite guidance");
+    expect(prompt).toContain("3+ meaningful steps");
+  });
+
+  test("TodoWrite 不可用时，不注入 TodoWrite 引导", () => {
+    const prompt = buildSystemPrompt({ toolNames: ["Bash"] });
+
+    expect(prompt).not.toContain("## TodoWrite guidance");
+  });
+
+  test("显式 systemPrompt 保持原样，避免手动 compact 路径重复注入", () => {
+    const prompt = buildSystemPrompt({
+      systemPrompt: "custom system",
+      toolNames: ["TodoWrite"],
+    });
+
+    expect(prompt).toBe("custom system");
+  });
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // 测试用例
@@ -584,6 +613,25 @@ describe("runAgentLoop - SDK 入参组装", () => {
       }),
     );
     expect(calls[0]?.hasTools).toBe(true);
+  });
+
+  test("TodoWrite 工具可用时，SDK system 字段包含 TodoWrite guidance", async () => {
+    const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "test",
+        tools: [
+          {
+            ...makeEchoTool(),
+            name: "TodoWrite",
+          },
+        ],
+        client,
+      }),
+    );
+
+    expect(String(calls[0]?.system ?? "")).toContain("## TodoWrite guidance");
   });
 
   test("model 字段从 config 透传到 SDK", async () => {

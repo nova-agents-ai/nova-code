@@ -20,10 +20,11 @@ import {
   GlobTool,
   GrepTool,
   LSTool,
+  TodoWriteTool,
 } from "./tools.ts";
 
 describe("builtinTools 注册表", () => {
-  test("包含 M1 全部 7 个工具", () => {
+  test("包含 M6 全部 8 个工具", () => {
     const names = builtinTools.map((t) => t.name);
     expect(names).toContain("LS");
     expect(names).toContain("FileRead");
@@ -32,6 +33,7 @@ describe("builtinTools 注册表", () => {
     expect(names).toContain("Bash");
     expect(names).toContain("Grep");
     expect(names).toContain("Glob");
+    expect(names).toContain("TodoWrite");
   });
 
   test("findTool 按名严格查找", () => {
@@ -63,6 +65,7 @@ describe("工具命名一致性 smoke test（v2.2 评审 · 代码质量 Issue #
     { tool: BashTool, expectedName: "Bash" },
     { tool: GrepTool, expectedName: "Grep" },
     { tool: GlobTool, expectedName: "Glob" },
+    { tool: TodoWriteTool, expectedName: "TodoWrite" },
   ];
 
   test("name 字段非空且为字符串", () => {

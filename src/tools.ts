@@ -4,8 +4,8 @@
  * 与 claude-code 顶层 src/tools.ts 对齐 —— 注册表在顶层，具体实现在
  * src/tools/<ToolName>/<ToolName>.ts。
  *
- * M1 完整工具集（7 个）：
- * - LS / FileRead / FileWrite / FileEdit / Bash / Grep / Glob
+ * M6 完整内置工具集（8 个）：
+ * - LS / FileRead / FileWrite / FileEdit / Bash / Grep / Glob / TodoWrite
  */
 
 import type { Tool } from "./Tool.ts";
@@ -16,6 +16,7 @@ import { FileWriteTool } from "./tools/FileWriteTool/FileWriteTool.ts";
 import { GlobTool } from "./tools/GlobTool/GlobTool.ts";
 import { GrepTool } from "./tools/GrepTool/GrepTool.ts";
 import { LSTool } from "./tools/LSTool/LSTool.ts";
+import { TodoWriteTool } from "./tools/TodoWriteTool/TodoWriteTool.ts";
 
 /**
  * 内置工具清单。库用户可以选择性使用，也可以传入空数组关闭工具调用。
@@ -29,6 +30,7 @@ export const builtinTools: readonly Tool[] = [
   BashTool,
   GrepTool,
   GlobTool,
+  TodoWriteTool,
 ];
 
 /**
@@ -39,11 +41,20 @@ export const builtinTools: readonly Tool[] = [
  * is_error=true 的 tool_result 让模型自我纠正（见 src/QueryEngine.ts 的
  * executeOneTool 函数）。
  *
- * 注：M1 仅 7 工具，O(n) 查找完全够用。M8 引入 MCP 工具数膨胀时再换 Map。
+ * 注：当前内置工具数很小，O(n) 查找完全够用。M8 引入 MCP 工具数膨胀时再换 Map。
  */
 export function findTool(name: string, tools: readonly Tool[]): Tool | undefined {
   return tools.find((tool) => tool.name === name);
 }
 
 // 单工具按命名导出，便于测试与外部按需引用
-export { BashTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool, LSTool };
+export {
+  BashTool,
+  FileEditTool,
+  FileReadTool,
+  FileWriteTool,
+  GlobTool,
+  GrepTool,
+  LSTool,
+  TodoWriteTool,
+};

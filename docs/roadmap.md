@@ -1,4 +1,4 @@
-# nova-code 路线图 v2.6
+# nova-code 路线图 v2.7
 
 > 渐进对齐 → 改进 → 超越
 >
@@ -180,13 +180,23 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 - 测试：新增 cost/config/init 单测 + `m5-e2e-cost`；全量 616 tests 通过
 - 详见 `docs/design/M5-cost-config-init.md`、使用手册 `docs/manual/M5-usage-guide.md`、实现架构 `docs/architecture/M5-architecture.md`
 
-### M6 — TodoWrite 工具
+### M6 — TodoWrite 工具 ✅（已完成）
 
 **新增**：内存任务表 + ASCII 渲染 + system prompt 引导
 
 **参照**：`claude-code/src/tools/TodoWriteTool/`
 
-**DoD**：模型在跨多文件任务时主动调用
+**DoD**：模型在跨多文件任务时主动调用 ✅
+
+**交付摘要**：
+- 新增 `src/tools/TodoWriteTool/`（constants / prompt / todoTypes / todoState / renderTodoList / Tool 实现），工具名与输入 shape 对齐 claude-code：`TodoWrite({ todos })`，`content` / `status` / `activeForm` 三字段同形
+- `src/tools.ts` 注册第 8 个内置工具；`requiresApproval=false`，不走写权审批
+- `buildSystemPrompt({ toolNames })` 在 TodoWrite 可用且未显式传入 systemPrompt 时追加 TodoWrite guidance；chat 手动 `/compact` runtime 复用同一构造路径，避免 prompt cache 漂移
+- `todoState` 采用 M6 范围内的进程级内存表；完整 list 替换状态，全部 `completed` 后清空存储
+- `renderTodoList` 输出 `[x]` / `[*]` / `[ ]` 三态 ASCII；ask/chat 对 TodoWrite 成功 tool_result 例外展示到 stderr
+- mock transport 新增 `NOVA_MOCK_SCENARIO=todo-loop`，验证复杂任务开头主动 TodoWrite
+- 测试：新增 TodoWrite 单测、QueryEngine prompt 注入测试、integration TodoWrite、`m6-e2e-todowrite`；全量 631 tests 通过
+- 详见 `docs/design/M6-todowrite.md`、使用手册 `docs/manual/M6-usage-guide.md`、实现架构 `docs/architecture/M6-architecture.md`
 
 ### M6.5 — 重构窗口 #2 + Phase 1 收官
 
@@ -467,6 +477,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.7**（2026-05-14）：M6 TodoWrite 工具落地。新增 `src/tools/TodoWriteTool/`，对齐 claude-code 的 `TodoWrite({ todos })` 输入 shape 与 `pending/in_progress/completed` 三态；进程内任务表支持完整 list 替换与全部完成后清空；system prompt 在工具可用时追加 TodoWrite guidance；ask/chat 对 TodoWrite 成功结果渲染 ASCII todo list；mock transport 新增 `todo-loop` 场景并补 e2e；新增 M6 设计文档 / 使用手册 / 架构快照；全量 631 tests 通过。
 - **v2.6**（2026-05-14）：M5 Cost / Config CLI / init 落地。新增 `src/services/cost`（静态 Anthropic 价格快照、`CostTracker`、`~/.nova-code/cost.jsonl` ledger）；chat 退出打印 `[cost]` 摘要并记录普通 turn + auto compact + manual `/compact` 的 usage；新增 `nova-code cost [--json]`、`nova-code config get|set`（apiKey 脱敏、正整数校验）、`nova-code init [--force]`（最小 CLAUDE.md 模板）；`compact_end` 事件可选携带 `usage?: ApiUsage`；新增 M5 设计文档 / 使用手册 / 架构快照；全量 616 tests 通过。
 - **v2.5**（2026-05-12）：M4 上下文压缩 + CLAUDE.md 注入落地。阈值 167K 自动 compact + circuit breaker（失败 3 次停用） + `/compact` 手动 + claude-code 同款 prompt 模板 + token 锚点估算（SDK usage + chars/4）；CLAUDE.md 4 层（managed → user → project chain → local chain）+ `@include` 递归（深度上限 5 + 循环检测）启动时一次注入 system prompt；@include 解析与 HTML comment 剥离用 marked Lexer 复刻 claude-code 同款（支持 inline @path、fragment 剥离、escaped space、TEXT_FILE_EXTENSIONS 白名单）；新增 `services/analytics` 子系统复刻 claude-code 的 `logEvent(name, payload)` 接口（环形 buffer + 可选 JSONL 落盘 + `NOVA_DISABLE_TELEMETRY` / `NOVA_TELEMETRY_FILE` 开关），事件名沿用 `tengu_*` 前缀；新增 `compact_start` / `compact_end` AgentEvent；ChatSession.compact() 用快照+成功才提交避免半提交；partialCompact 同步落地作为 roadmap 失败信号回退方案；约 104 条新单测 + 4 条 e2e；详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`
 - **v2.4**（2026-05-04）：M3 权限与安全 milestone 落地：七步权限流水线 + 三层规则存储 + 4 档模式 + 5 档交互弹窗；`--dangerously-skip-permissions` / `/permissions` 斜杠命令；ask 默认 acceptEdits + headless auto-deny Provider；chat 默认 default + REPL 5 档 Provider；详见 `docs/design/M3-permissions.md`、使用手册 `docs/manual/M3-usage-guide.md`、实现架构 `docs/architecture/M3/README.md`

@@ -4,7 +4,7 @@ import type {
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
 
-type MockScenario = "chat" | "edit-loop";
+export type MockScenario = "chat" | "edit-loop" | "todo-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -99,7 +99,49 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     };
   }
 
+  if (scenario === "todo-loop") {
+    return buildTodoLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildTodoLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  if (resultCount === 0) {
+    return {
+      leadingText: "Planning the multi-step task...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Planning the multi-step task..."),
+        makeToolUseContent("toolu_todo_01", "TodoWrite", {
+          todos: [
+            {
+              content: "Inspect project structure",
+              activeForm: "Inspecting project structure",
+              status: "completed",
+            },
+            {
+              content: "Implement changes across files",
+              activeForm: "Implementing changes across files",
+              status: "in_progress",
+            },
+            {
+              content: "Run verification",
+              activeForm: "Running verification",
+              status: "pending",
+            },
+          ],
+        }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. TodoWrite tracked the multi-step task.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. TodoWrite tracked the multi-step task."),
+  };
 }
 
 function buildEditLoopTurn(body: MockRequestBody): MockTurnPlan {

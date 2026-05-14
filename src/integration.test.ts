@@ -514,6 +514,70 @@ describe("integration · tool error propagation", () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// M6 TodoWrite：复杂任务先规划，再继续执行
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("integration · TodoWrite", () => {
+  test("agent can create an in-memory todo list before a multi-step task", async () => {
+    const { client, calls } = makeFakeClient([
+      {
+        textChunks: ["Planning first..."],
+        toolUses: [
+          {
+            id: "tu_todo",
+            name: "TodoWrite",
+            input: {
+              todos: [
+                {
+                  content: "Inspect project structure",
+                  activeForm: "Inspecting project structure",
+                  status: "completed",
+                },
+                {
+                  content: "Implement changes across files",
+                  activeForm: "Implementing changes across files",
+                  status: "in_progress",
+                },
+                {
+                  content: "Run verification",
+                  activeForm: "Running verification",
+                  status: "pending",
+                },
+              ],
+            },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      {
+        textChunks: ["Todo list is ready."],
+        stopReason: "end_turn",
+      },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "Plan a cross-file implementation",
+        tools: builtinTools,
+        client,
+      }),
+    );
+
+    expect(calls.length).toBe(2);
+    const toolCalls = collectToolCalls(events);
+    expect(toolCalls.map((t) => t.toolName)).toEqual(["TodoWrite"]);
+
+    const toolResults = collectToolResults(events);
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]?.isError).toBe(false);
+    expect(toolResults[0]?.content).toContain("Current todos:");
+    expect(toolResults[0]?.content).toContain("[*] 2. Implementing changes across files");
+    expect(toolResults[0]?.content).toContain("[ ] 3. Run verification");
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // m1-5-e2e-writeflow：真子进程 + 本地 mock LLM 的写权完整链路验证
 //

@@ -21,6 +21,7 @@ import { LLMApiError } from "../../services/api/errors.ts";
 import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
+import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "./debugSink.ts";
 import { createHeadlessPermissionProvider } from "./headlessPermissionProvider.ts";
@@ -139,6 +140,8 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
         case "tool_result":
           if (event.isError) {
             process.stderr.write(`[tool] ${event.toolName} failed: ${event.content}\n`);
+          } else if (event.toolName === TODO_WRITE_TOOL_NAME) {
+            process.stderr.write(`${event.content}\n`);
           }
           break;
         case "done":
