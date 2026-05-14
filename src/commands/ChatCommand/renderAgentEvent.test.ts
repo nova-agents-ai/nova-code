@@ -307,4 +307,75 @@ describe("renderAgentEvent", () => {
 
     expect(err).toEqual(["[permission] allowed & saved to session: Bash\n"]);
   });
+
+  // ── M4 compact 事件渲染 ────────────────────────────────────────────────
+  test("compact_start: auto trigger 打印 auto-compacting", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+    renderAgentEvent(
+      { type: "compact_start", trigger: "auto", preCompactTokenCount: 168000 },
+      io,
+      state,
+    );
+    expect(err.join("")).toContain("[compact] auto-compacting");
+    expect(err.join("")).toContain("168000");
+  });
+
+  test("compact_start: manual trigger 不打 auto- 前缀", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+    renderAgentEvent(
+      { type: "compact_start", trigger: "manual", preCompactTokenCount: 100 },
+      io,
+      state,
+    );
+    expect(err.join("")).toContain("[compact] compacting");
+    expect(err.join("")).not.toContain("auto-");
+  });
+
+  test("compact_end: 成功打 X → Y tokens", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+    renderAgentEvent(
+      {
+        type: "compact_end",
+        trigger: "auto",
+        preCompactTokenCount: 170000,
+        postCompactTokenCount: 800,
+      },
+      io,
+      state,
+    );
+    expect(err.join("")).toContain("[compact] done: 170000 → 800");
+  });
+
+  test("compact_end: 失败打 [compact] failed", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+    renderAgentEvent(
+      {
+        type: "compact_end",
+        trigger: "auto",
+        preCompactTokenCount: 170000,
+        error: "API rate-limited",
+      },
+      io,
+      state,
+    );
+    expect(err.join("")).toContain("[compact] failed: API rate-limited");
+  });
+
+  test("compact_start: 若处于 inAssistantText → 先补 stdout 换行", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+    state.inAssistantText = true;
+    renderAgentEvent(
+      { type: "compact_start", trigger: "auto", preCompactTokenCount: 100 },
+      io,
+      state,
+    );
+    expect(out).toEqual(["\n"]);
+    expect(err.join("")).toContain("[compact]");
+    expect(state.inAssistantText).toBe(false);
+  });
 });

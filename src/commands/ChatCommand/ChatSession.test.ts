@@ -390,3 +390,154 @@ describe("ChatSession - sendTurn 中途抛错的原子性", () => {
     expect(s.snapshot()).toEqual([]);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// M4 compact()
+// ────────────────────────────────────────────────────────────────────────────
+
+import type Anthropic from "@anthropic-ai/sdk";
+import type { Message as SdkMessage } from "@anthropic-ai/sdk/resources/messages";
+import type { ChatCompactContext } from "./ChatSession.ts";
+
+function makeFakeClientFactory(text: string) {
+  const final: SdkMessage = {
+    id: "msg_compact_test",
+    type: "message",
+    role: "assistant",
+    model: "claude-test",
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    content: [{ type: "text", text, citations: null }],
+    usage: {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: null,
+      cache_read_input_tokens: null,
+      cache_creation: null,
+      server_tool_use: null,
+      service_tier: null,
+      inference_geo: null,
+    },
+    container: null,
+    stop_details: null,
+  };
+  return (_config: unknown): Anthropic =>
+    ({
+      messages: {
+        stream: () => ({
+          [Symbol.asyncIterator]() {
+            return { next: async () => ({ done: true, value: undefined }) };
+          },
+          finalMessage: async () => final,
+        }),
+      },
+    }) as unknown as Anthropic;
+}
+
+function makeCompactCtx(
+  clientFactory: ReturnType<typeof makeFakeClientFactory>,
+): ChatCompactContext {
+  return {
+    config: FIXED_CONFIG,
+    signal: new AbortController().signal,
+    clientFactory,
+  };
+}
+
+describe("ChatSession.compact()", () => {
+  test("空 messages → 抛错", async () => {
+    const s = new ChatSession(FIXED_META);
+    await expect(s.compact(makeCompactCtx(makeFakeClientFactory("x")))).rejects.toThrow();
+  });
+
+  test("成功 → messages 重置为单条 summary user message", async () => {
+    const s = new ChatSession(FIXED_META, [
+      { role: MessageRoleEnum.USER, content: "first question" },
+      { role: MessageRoleEnum.ASSISTANT, content: [{ type: "text", text: "first answer" }] },
+      { role: MessageRoleEnum.USER, content: "second question" },
+      { role: MessageRoleEnum.ASSISTANT, content: [{ type: "text", text: "second answer" }] },
+    ]);
+    const ctx = makeCompactCtx(makeFakeClientFactory("<summary>kept everything</summary>"));
+    const outcome = await s.compact(ctx);
+
+    expect(outcome.compactedMessages).toBe(4);
+    expect(outcome.preCompactTokenCount).toBeGreaterThan(0);
+    expect(outcome.postCompactTokenCount).toBeGreaterThan(0);
+
+    const after = s.snapshot();
+    expect(after.length).toBe(1);
+    expect(after[0]?.role).toBe(MessageRoleEnum.USER);
+    if (typeof after[0]?.content === "string") {
+      expect(after[0]?.content).toContain("Summary:");
+      expect(after[0]?.content).toContain("kept everything");
+    }
+  });
+
+  test("失败时 messages 不变（原子性）", async () => {
+    // 给空文本 → compactConversation 抛 INCOMPLETE_RESPONSE
+    const original: NovaMessage[] = [
+      { role: MessageRoleEnum.USER, content: "hi" },
+      { role: MessageRoleEnum.ASSISTANT, content: [{ type: "text", text: "hello" }] },
+    ];
+    const s = new ChatSession(FIXED_META, original);
+    const ctx = makeCompactCtx(makeFakeClientFactory(""));
+    await expect(s.compact(ctx)).rejects.toThrow();
+    expect(s.snapshot()).toEqual(original);
+  });
+
+  test("customInstructions 传入 compactConversation", async () => {
+    // 用 spy 验证 customInstructions 是否会进入实际 LLM 请求
+    let capturedBody: unknown;
+    const final: SdkMessage = {
+      id: "x",
+      type: "message",
+      role: "assistant",
+      model: "claude-test",
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      content: [{ type: "text", text: "<summary>ok</summary>", citations: null }],
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        cache_creation: null,
+        server_tool_use: null,
+        service_tier: null,
+        inference_geo: null,
+      },
+      container: null,
+      stop_details: null,
+    };
+    const spyClient: Anthropic = {
+      messages: {
+        // biome-ignore lint/suspicious/noExplicitAny: spy
+        stream: (body: any) => {
+          capturedBody = body;
+          return {
+            [Symbol.asyncIterator]() {
+              return { next: async () => ({ done: true, value: undefined }) };
+            },
+            finalMessage: async () => final,
+          };
+        },
+      },
+    } as unknown as Anthropic;
+    const s = new ChatSession(FIXED_META, [
+      { role: MessageRoleEnum.USER, content: "q" },
+      { role: MessageRoleEnum.ASSISTANT, content: [{ type: "text", text: "a" }] },
+    ]);
+    await s.compact(
+      {
+        config: FIXED_CONFIG,
+        signal: new AbortController().signal,
+        clientFactory: () => spyClient,
+      },
+      "extra hint",
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: spy
+    const lastMsg = (capturedBody as any).messages.at(-1);
+    expect(lastMsg.content).toContain("Additional Instructions:");
+    expect(lastMsg.content).toContain("extra hint");
+  });
+});

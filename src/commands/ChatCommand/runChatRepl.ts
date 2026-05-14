@@ -21,6 +21,11 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 
 import type { ConfigSource, ResolvedConfig } from "../../config/config.ts";
 import { AbortError } from "../../errors/index.ts";
+import { buildSystemPrompt } from "../../QueryEngine.ts";
+import {
+  type AutoCompactTrackingState,
+  createAutoCompactTrackingState,
+} from "../../services/compact/autoCompact.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
 import type { PermissionMode } from "../../types/permissions.ts";
@@ -56,6 +61,15 @@ export interface RunChatReplParams {
   readonly permissionStore?: PermissionStore;
   /** 可选：权限模式，默认 "default"。 */
   readonly permissionMode?: PermissionMode;
+  /**
+   * M4：CLAUDE.md 4 层加载结果，启动时一次性加载。注入后追加到 system prompt 末尾。
+   * 不注入 = 不启用 CLAUDE.md。
+   */
+  readonly projectInstructions?: string;
+  /** M4：是否启用自动 compact，默认 true。配合 autoCompactTracking 才生效。 */
+  readonly autoCompactEnabled?: boolean;
+  /** M4：自动 compact tracking；不注入则 runChatRepl 自动构造一份。 */
+  readonly autoCompactTracking?: AutoCompactTrackingState;
 }
 
 /**
@@ -88,7 +102,13 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     configSource,
     permissionStore,
     permissionMode,
+    projectInstructions,
   } = params;
+  // M4: 自动 compact 默认开启；调用方可通过 autoCompactEnabled=false 关闭
+  const autoCompactEnabled = params.autoCompactEnabled !== false;
+  // M4: 单 chat 会话共用一份 tracking（若调用方注入则用注入的）
+  const autoCompactTracking: AutoCompactTrackingState =
+    params.autoCompactTracking ?? createAutoCompactTrackingState();
 
   // ────────────── I/O wiring ──────────────
   const io: ReplIO = params.io ?? defaultReplIO();
@@ -217,13 +237,28 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       }
 
       // 斜杠命令优先
+      // M4: 为 /compact 这类需要发 LLM 调用的命令准备 chatRuntime；
+      // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
+      const slashAbort = new AbortController();
+      phaseRef.current = { kind: "streaming", abort: slashAbort };
       const dispatch = await dispatchSlash(input, {
         session,
         io: slashIO,
         ...(configSource ? { configSource } : {}),
         ...(permissionStore !== undefined ? { permissionStore } : {}),
         permissionModeRef,
+        chatRuntime: {
+          config,
+          signal: slashAbort.signal,
+          tools,
+          systemPrompt: buildSystemPrompt(
+            projectInstructions !== undefined ? { projectInstructions } : {},
+          ),
+          ...(llmLogSink !== undefined ? { llmLogSink } : {}),
+        },
       });
+      // 一旦 dispatch 完成 → 重置 phase 回 idle（无论 dispatch.handled 与否）
+      phaseRef.current = { kind: "idle" };
       if (dispatch.handled) {
         if (dispatch.result.action === "exit") {
           return dispatch.result.exitCode ?? 0;
@@ -246,6 +281,10 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           ...(permissionStore !== undefined ? { permissionStore } : {}),
           ...(permissionProvider !== undefined ? { permissionProvider } : {}),
           cwd: process.cwd(),
+          // M4: 自动 compact + CLAUDE.md 注入
+          autoCompactEnabled,
+          autoCompactTracking,
+          ...(projectInstructions !== undefined ? { projectInstructions } : {}),
         });
         for await (const event of gen) {
           debugSink.write(event);

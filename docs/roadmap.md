@@ -1,8 +1,8 @@
-# nova-code 路线图 v2.4
+# nova-code 路线图 v2.5
 
 > 渐进对齐 → 改进 → 超越
 >
-> 最后更新：2026-05-04
+> 最后更新：2026-05-12
 
 ---
 
@@ -140,15 +140,26 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 - `/permissions` 斜杠命令（list / mode）+ `--dangerously-skip-permissions` flag（chat/ask 均支持）
 - 详见 `docs/design/M3-permissions.md`；使用手册 `docs/manual/M3-usage-guide.md`；实现架构 `docs/architecture/M3/README.md`
 
-### M4 — 上下文压缩
+### M4 — 上下文压缩 ✅（已完成）
 
 **新增**：自动 compact 触发器 + `/compact` 手动命令 + system prompt 注入 CLAUDE.md
 
 **参照**：`claude-code/src/services/compact/`
 
-**失败信号**：compact 后模型严重遗忘 → 回退到"保留最近 5 轮原文 + 仅压缩更早历史"
+**失败信号**：compact 后模型严重遗忘 → 回退到"保留最近 5 轮原文 + 仅压缩更早历史"（已落地 `partialCompactConversation`，配置切换待自用反馈触发）
 
-**DoD**：50 轮对话不触发 token 超限
+**DoD**：50 轮对话不触发 token 超限 ✅
+
+**交付摘要**：
+- `src/services/compact/` 7 文件（contextWindow / tokens / prompt / compact 主路径 / partialCompact 回退 / autoCompact 触发器 + circuit breaker / index）
+- `src/services/projectInstructions/` 3 文件（pathDiscovery / claudeMd 含 4 层 + @include / index）
+- QueryEngine 集成：每轮 turn 之前 `tryAutoCompact` + system prompt 拼接 projectInstructions；锚点更新；3 个新可选字段全部向后兼容
+- ChatSession 新增 `compact()` 方法（快照+成功才提交的原子语义）
+- `/compact` 斜杠命令（支持自定义指令）+ SlashContext 增加 chatRuntime 字段
+- AgentEvent 新增 `compact_start` / `compact_end` 两类；renderAgentEvent + runAskWithLLM 同步渲染
+- mockClient 扩展：检测 compact 请求（无 tools）+ NOVA_MOCK_INFLATE_USAGE 触发阈值 + system 字段落盘
+- 测试：87 条新单测 + 4 条 e2e（自动 / /compact / 50 轮 / CLAUDE.md @include）；总计 576 条全绿
+- 详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`
 
 ### M5 — Cost、Config CLI、init
 
@@ -445,6 +456,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.5**（2026-05-12）：M4 上下文压缩 + CLAUDE.md 注入落地。阈值 167K 自动 compact + circuit breaker（失败 3 次停用） + `/compact` 手动 + claude-code 同款 prompt 模板 + token 锚点估算（SDK usage + chars/4）；CLAUDE.md 4 层（managed → user → project chain → local chain）+ `@include` 递归（深度上限 5 + 循环检测）启动时一次注入 system prompt；@include 解析与 HTML comment 剥离用 marked Lexer 复刻 claude-code 同款（支持 inline @path、fragment 剥离、escaped space、TEXT_FILE_EXTENSIONS 白名单）；新增 `services/analytics` 子系统复刻 claude-code 的 `logEvent(name, payload)` 接口（环形 buffer + 可选 JSONL 落盘 + `NOVA_DISABLE_TELEMETRY` / `NOVA_TELEMETRY_FILE` 开关），事件名沿用 `tengu_*` 前缀；新增 `compact_start` / `compact_end` AgentEvent；ChatSession.compact() 用快照+成功才提交避免半提交；partialCompact 同步落地作为 roadmap 失败信号回退方案；约 104 条新单测 + 4 条 e2e；详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`
 - **v2.4**（2026-05-04）：M3 权限与安全 milestone 落地：七步权限流水线 + 三层规则存储 + 4 档模式 + 5 档交互弹窗；`--dangerously-skip-permissions` / `/permissions` 斜杠命令；ask 默认 acceptEdits + headless auto-deny Provider；chat 默认 default + REPL 5 档 Provider；详见 `docs/design/M3-permissions.md`、使用手册 `docs/manual/M3-usage-guide.md`、实现架构 `docs/architecture/M3/README.md`
 - **v2.3**（2026-05-04）：修复 §7.0 表格中 `src/llm/` 应消失的时机表述（M1 → M1.5，与 M1 / M1.5 章节一致）；M1.5 在本版本落地：`src/llm/` 命名空间清空，顺带交付 `QueryEngine.ts` / `services/api/{client,errors,errorUtils,withRetry}` / `errors/` / `types/message.ts` / `commands/<X>Command/`；新增严谨单测的 `withRetry`（429/502/503/504/529 重试 + 网络错误 + Retry-After + AbortSignal）；新增 e2e 用例 m1-5-e2e-writeflow（真子进程 + 内嵌 mock server 覆盖 Grep→FileEdit→Bash 读写闭环）；debug sink 预埋 sessionId 参数为 M2 chat REPL 预留；详见 `docs/design/M1.5-refactor.md`
 - **v2.2**（2026-05-01）：新增 §7.0 "与 claude-code 结构对齐（最高优先级原则）"，明确目录 / 模块 / 类命名必须与 claude-code 一致，列出当前 5 处 M0 历史偏离及偿还时机；M1 milestone 重写"新增 / 配套"段落，工具改用 PascalCase + Tool 后缀（BashTool 等），增加"结构对齐"步骤与"与 claude-code 的差异声明"段；M1.5 milestone 加入命名空间清理（`src/llm/` 删除）与 `QueryEngine.ts` 重命名

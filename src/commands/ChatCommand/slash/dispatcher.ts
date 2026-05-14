@@ -8,6 +8,7 @@
  * 参数引号转义 M2 不支持（/save "with spaces" 不做）——设计稿 §二非目标。
  */
 
+import { logEvent } from "../../../services/analytics/index.ts";
 import { findSlashCommand } from "./registry.ts";
 import type { SlashContext, SlashResult } from "./types.ts";
 
@@ -43,12 +44,14 @@ export async function dispatchSlash(
 
   if (name === "") {
     // 用户只输入了一个 `/`，当成未知命令处理：给个友善提示
+    logEvent("tengu_input_slash_missing", {});
     baseCtx.io.print("空命令。输入 /help 查看可用斜杠命令。\n");
     return { handled: true, result: { action: "continue" } };
   }
 
   const command = findSlashCommand(name);
   if (command === undefined) {
+    logEvent("tengu_input_slash_invalid", { name });
     baseCtx.io.print(`未知命令：/${name}。输入 /help 查看可用命令。\n`);
     return { handled: true, result: { action: "continue" } };
   }

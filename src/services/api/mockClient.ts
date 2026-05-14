@@ -21,12 +21,20 @@ interface MockRequestBody {
     readonly role?: string;
     readonly content: unknown;
   }>[];
+  /** M4: 用于验证 forked-agent compact 请求复用主循环 tools。 */
+  readonly tools?: unknown;
+  /** M4: compact 请求应设置 tool_choice:none，强制纯文本 summary。 */
+  readonly tool_choice?: unknown;
+  /** M4: 用于把 CLAUDE.md 注入情况写到 mock log。 */
+  readonly system?: unknown;
 }
 
 interface MockTurnPlan {
   readonly leadingText: string;
   readonly stopReason: SdkMessage["stop_reason"];
   readonly content: SdkMessage["content"];
+  /** M4: 可选地覆盖响应 usage（用于 e2e 触发 autoCompact 阈值）。 */
+  readonly usageOverride?: { readonly input_tokens: number; readonly output_tokens: number };
 }
 
 export function createMockAnthropicClient(options: MockAnthropicClientOptions): Anthropic {
@@ -47,17 +55,47 @@ async function appendRequestLog(logFile: string | undefined, body: MockRequestBo
   const entry = {
     messageCount: body.messages.length,
     lastUserText: extractLastUserText(body.messages),
+    // M4: 把 tools/tool_choice/system 落盘，给 e2e 断言 forked-agent cache 共享。
+    hasTools: body.tools !== undefined,
+    toolChoiceType: extractToolChoiceType(body.tool_choice),
+    systemSnippet: extractSystemSnippet(body.system),
   };
   const existing = await readLogFileText(logFile);
   await Bun.write(logFile, `${existing}${JSON.stringify(entry)}\n`);
 }
 
+/**
+ * M4: 检测 compact 请求。
+ * forked-agent 对齐后 compact 会带主循环同款 tools，因此只能用 prompt 特征识别。
+ */
+function isCompactRequest(body: MockRequestBody): boolean {
+  const lastUserText = extractLastUserText(body.messages);
+  return lastUserText?.includes("Your task is to create a detailed summary") === true;
+}
+
 function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan {
+  // M4: compact 请求一律返回 summary（不论 scenario）
+  if (isCompactRequest(body)) {
+    return {
+      leadingText: "",
+      stopReason: "end_turn",
+      content: makeTextContent("<summary>conversation compacted by mock</summary>"),
+    };
+  }
+
   if (scenario === "chat") {
+    // M4: 可被 NOVA_MOCK_INFLATE_USAGE=<num> 强制把 usage.input_tokens 拉到指定值
+    // 用来触发 autoCompact 阈值。不设/为 0 时按原 1/1 返回。
+    const inflate = parseInt(process.env["NOVA_MOCK_INFLATE_USAGE"] ?? "0", 10);
+    const usageOverride =
+      Number.isFinite(inflate) && inflate > 0
+        ? { input_tokens: inflate, output_tokens: 1 }
+        : undefined;
     return {
       leadingText: "ok",
       stopReason: "end_turn",
       content: makeTextContent("ok"),
+      ...(usageOverride !== undefined ? { usageOverride } : {}),
     };
   }
 
@@ -134,6 +172,29 @@ function extractLastUserText(messages: MockRequestBody["messages"]): string | un
   return undefined;
 }
 
+/**
+ * M4: 把 system 字段抽前 500 字符放到 mock log，供 e2e 断言 CLAUDE.md 是否注入。
+ */
+function extractSystemSnippet(system: unknown): string | undefined {
+  // 给上限一点余量；CLAUDE.md 4 层 + @include 时 parent 内容靠后，需要够长才捕得到
+  const MAX = 4000;
+  if (typeof system === "string") return system.slice(0, MAX);
+  if (Array.isArray(system)) {
+    const first = system[0];
+    if (isObject(first) && typeof first["text"] === "string") {
+      return (first["text"] as string).slice(0, MAX);
+    }
+  }
+  return undefined;
+}
+
+function extractToolChoiceType(toolChoice: unknown): string | undefined {
+  if (isObject(toolChoice) && typeof toolChoice["type"] === "string") {
+    return toolChoice["type"];
+  }
+  return undefined;
+}
+
 async function readLogFileText(path: string): Promise<string> {
   try {
     return await Bun.file(path).text();
@@ -143,6 +204,11 @@ async function readLogFileText(path: string): Promise<string> {
 }
 
 function makeMockStream(turn: MockTurnPlan, logPromise: Promise<void>): MockStream {
+  // M4: 允许 turn.usageOverride 强制响应 usage（用于 autoCompact 阈值触发）
+  const usage = (turn.usageOverride ?? {
+    input_tokens: 1,
+    output_tokens: 1,
+  }) as SdkMessage["usage"];
   const finalMessage: SdkMessage = {
     id: "msg_mock",
     container: null,
@@ -153,7 +219,7 @@ function makeMockStream(turn: MockTurnPlan, logPromise: Promise<void>): MockStre
     stop_details: null,
     stop_reason: turn.stopReason,
     stop_sequence: null,
-    usage: { input_tokens: 1, output_tokens: 1 } as SdkMessage["usage"],
+    usage,
   };
 
   const events: RawMessageStreamEvent[] = [];

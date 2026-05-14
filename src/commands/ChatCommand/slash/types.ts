@@ -10,8 +10,10 @@
  * - 单测直接 mock 两个同步方法，完全不依赖 readline/TTY
  */
 
-import type { ConfigSource } from "../../../config/config.ts";
+import type { ConfigSource, ResolvedConfig } from "../../../config/config.ts";
+import type { LlmLogSink } from "../../../QueryEngine.ts";
 import type { PermissionStore } from "../../../services/permissions/permissionStore.ts";
+import type { Tool } from "../../../Tool.ts";
 import type { PermissionMode } from "../../../types/permissions.ts";
 import type { ChatSession } from "../ChatSession.ts";
 
@@ -61,6 +63,21 @@ export interface SlashContext {
   readonly permissionStore?: PermissionStore;
   /** 权限模式 ref；/permissions mode 依赖它。 */
   readonly permissionModeRef?: PermissionModeRef;
+  /**
+   * M4：发 LLM 调用的斜杠命令需要的运行时上下文（仅 /compact 等使用）。
+   *
+   * 不强制存在 —— 单测场景调度普通斜杠命令（/clear /save 等）时可省略。
+   * /compact 在 chatRuntime 缺失时打印 "权限系统未启用" 风格的提示并 continue，
+   * 不报错。
+   */
+  readonly chatRuntime?: {
+    readonly config: ResolvedConfig;
+    readonly signal: AbortSignal;
+    readonly llmLogSink?: LlmLogSink;
+    readonly systemPrompt?: string;
+    readonly projectInstructions?: string;
+    readonly tools?: readonly Tool[];
+  };
 }
 
 /** 一条斜杠命令的定义。 */

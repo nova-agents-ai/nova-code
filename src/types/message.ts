@@ -52,12 +52,32 @@ export enum MessageRoleEnum {
 }
 
 /**
+ * Anthropic SDK 在 message.usage 上返回的最小子集（用于 M4 token 计数）。
+ *
+ * 不直接 import SDK 的 Usage 类型：
+ * - SDK 类型可能跨版本变形（SDK 0.x → 1.x 已经改过）
+ * - QueryEngine 在 streamOneTurn 完成后只取这 4 个字段构造 ApiUsage 挂到 assistant message
+ */
+export interface ApiUsage {
+  readonly input_tokens: number;
+  readonly cache_creation_input_tokens?: number | null;
+  readonly cache_read_input_tokens?: number | null;
+  readonly output_tokens: number;
+}
+
+/**
  * 一条对话消息。可以是纯文本（content 为字符串）或结构化内容块数组。
  * 与 Anthropic SDK 的 MessageParam 形状对齐，便于 toSdkMessages 直接透传。
+ *
+ * M4 起：assistant message 可携带 SDK 响应的 usage，用于 tokenCountWithEstimation
+ * 走 claude-code 同款 walk-back-from-end 算法。user message 永远 undefined。
+ * 序列化到 sessionStore JSONL 时 usage 会一同写出；缺失字段对加载向后兼容。
  */
 export interface NovaMessage {
   readonly role: MessageRoleEnum;
   readonly content: string | readonly NovaContentBlock[];
+  /** 仅 assistant 消息有；M4 token 计数用。 */
+  readonly usage?: ApiUsage;
 }
 
 /**
@@ -125,7 +145,35 @@ export type AgentEvent =
       readonly reason: string;
       /** 若用户选 allow-always-*，标识升级到哪一层 source。 */
       readonly persisted?: PermissionRuleSource;
+    }
+  /**
+   * M4：上下文压缩即将开始。trigger 区分自动 vs 手动；preCompactTokenCount
+   * 是触发时估算的当前上下文 token 数，用于 UI 提示与日志溯源。
+   */
+  | {
+      readonly type: "compact_start";
+      readonly trigger: CompactTrigger;
+      readonly preCompactTokenCount: number;
+    }
+  /**
+   * M4：上下文压缩结束。成功时 error 为 undefined 且 postCompactTokenCount
+   * 反映替换后的估算上下文 token 数；失败时 error 给出 message，调用方决定
+   * 是否要 surface 给用户（自动 compact 通常静默重试，手动 /compact 必报）。
+   */
+  | {
+      readonly type: "compact_end";
+      readonly trigger: CompactTrigger;
+      readonly preCompactTokenCount: number;
+      readonly postCompactTokenCount?: number;
+      readonly error?: string;
     };
+
+/**
+ * compact 触发来源。
+ *  - "auto"   ：QueryEngine 在 turn 间检查阈值后自动触发
+ *  - "manual" ：用户 /compact 斜杠命令显式触发
+ */
+export type CompactTrigger = "auto" | "manual";
 
 /**
  * Agent loop 的终止原因。

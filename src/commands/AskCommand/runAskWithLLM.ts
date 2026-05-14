@@ -15,8 +15,12 @@
 import { loadConfig } from "../../config/config.ts";
 import { AbortError, ConfigError, MaxTurnsExceededError } from "../../errors/index.ts";
 import { runAgentLoop } from "../../QueryEngine.ts";
+import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
+import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
+import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "./debugSink.ts";
 import { createHeadlessPermissionProvider } from "./headlessPermissionProvider.ts";
@@ -32,6 +36,9 @@ export interface RunAskOptions {
 }
 
 export async function runAskWithLLM(question: string, options: RunAskOptions): Promise<number> {
+  // 启动即 attach 默认 sink（幂等）
+  attachAnalyticsSink(createDefaultAnalyticsSink());
+
   // Ctrl+C：转成 abort signal 让 agent loop 优雅退出
   const abortController = new AbortController();
   const onSigint = (): void => {
@@ -67,6 +74,15 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     const permissionProvider = createHeadlessPermissionProvider({
       stderr: (t) => process.stderr.write(t),
     });
+    // M4: 启动时一次性加载 CLAUDE.md（4 层）+ 准备 autoCompact tracking
+    const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+    const autoCompactTracking = createAutoCompactTrackingState();
+    logEvent("tengu_started", {
+      command: "ask",
+      model: config.model,
+      dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
+      hasProjectInstructions: projectInstructions !== undefined,
+    });
     let inAssistantText = false;
 
     if (options.debug) {
@@ -93,6 +109,10 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       permissionStore,
       permissionProvider,
       cwd: process.cwd(),
+      // M4: 默认开启 auto-compact 与 CLAUDE.md 注入
+      autoCompactEnabled: true,
+      autoCompactTracking,
+      ...(projectInstructions !== undefined ? { projectInstructions } : {}),
     });
 
     for await (const event of generator) {
@@ -142,11 +162,32 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
             process.stderr.write(`[permission] denied: ${event.toolName} (${event.reason})\n`);
           }
           break;
+        case "compact_start":
+          if (inAssistantText) {
+            process.stdout.write("\n");
+            inAssistantText = false;
+          }
+          process.stderr.write(
+            `[compact] auto-compacting (≈ ${event.preCompactTokenCount} tokens)\n`,
+          );
+          break;
+        case "compact_end":
+          if (event.error !== undefined) {
+            process.stderr.write(`[compact] failed: ${event.error}\n`);
+          } else if (event.postCompactTokenCount !== undefined) {
+            process.stderr.write(
+              `[compact] done: ${event.preCompactTokenCount} → ${event.postCompactTokenCount} tokens\n`,
+            );
+          }
+          break;
       }
     }
+    logEvent("tengu_exit", { command: "ask", exitCode: 0 });
     return 0;
   } catch (error) {
-    return handleAskError(error);
+    const code = handleAskError(error);
+    logEvent("tengu_exit", { command: "ask", exitCode: code, errored: true });
+    return code;
   } finally {
     debugSink.close();
     llmLogSink.close();

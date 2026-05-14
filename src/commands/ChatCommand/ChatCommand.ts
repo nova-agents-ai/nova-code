@@ -14,7 +14,10 @@
 
 import { loadConfig } from "../../config/config.ts";
 import { ConfigError } from "../../errors/index.ts";
+import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
+import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "../AskCommand/debugSink.ts";
 import type { CommandDefinition } from "../types.ts";
@@ -34,6 +37,9 @@ export const chatCommand: CommandDefinition = {
     "  --resume:       从 ~/.nova-code/sessions/<id>.jsonl 恢复会话\n" +
     "  --dangerously-skip-permissions: 跳过权限询问，仅 DENY_PATTERNS 拦截",
   run: async (args) => {
+    // 启动即 attach 默认 sink（幂等）：保证所有早期 logEvent 调用最终都被排空
+    attachAnalyticsSink(createDefaultAnalyticsSink());
+
     let debug = false;
     let pretty = false;
     let resumeId: string | undefined;
@@ -114,7 +120,18 @@ export const chatCommand: CommandDefinition = {
         }
       }
 
-      return await runChatRepl({
+      // M4: 启动时一次性加载 CLAUDE.md 4 层（不抛错；缺失时 undefined）
+      const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+
+      logEvent("tengu_started", {
+        command: "chat",
+        model: config.model,
+        resumed: resumeId !== undefined,
+        dangerouslySkipPermissions,
+        hasProjectInstructions: projectInstructions !== undefined,
+      });
+
+      const exitCode = await runChatRepl({
         session,
         config,
         tools: builtinTools,
@@ -123,10 +140,14 @@ export const chatCommand: CommandDefinition = {
         permissionStore,
         // --dangerously-skip-permissions → bypassPermissions，否则 default
         permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
+        ...(projectInstructions !== undefined ? { projectInstructions } : {}),
       });
+      logEvent("tengu_exit", { command: "chat", exitCode });
+      return exitCode;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`\nchat: ${message}`);
+      logEvent("tengu_exit", { command: "chat", exitCode: 2, errored: true });
       return 2;
     } finally {
       debugSink.close();

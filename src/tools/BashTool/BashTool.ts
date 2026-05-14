@@ -20,6 +20,7 @@ import type { ChildProcessByStdio } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { AbortError, ToolExecutionError } from "../../errors/index.ts";
+import { logEvent } from "../../services/analytics/index.ts";
 import type { Tool, ToolExecutionContext } from "../../Tool.ts";
 import {
   BASH_DEFAULT_TIMEOUT_MS,
@@ -342,11 +343,22 @@ export const BashTool: Tool = {
 
     const hardHit = checkHardBlacklist(command);
     if (hardHit !== null) {
+      logEvent("tengu_bash_security_check_triggered", {
+        pattern: hardHit.name,
+      });
       throw new ToolExecutionError(TOOL_NAME, `Command rejected by safety filter: ${hardHit.name}`);
     }
 
     const softWarnings = checkSoftWarnings(command);
+    const startedAt = Date.now();
     const outcome = await spawnAndWait(command, cwd, timeoutMs, context.signal);
+    logEvent("tengu_bash_tool_command_executed", {
+      durationMs: Date.now() - startedAt,
+      // 不打 command 本体（PII / 安全）；仅打首个 token + 退出码
+      commandHead: command.trim().split(/\s+/)[0] ?? "",
+      exitCode: outcome.exitCode ?? -1,
+      timedOut: outcome.killedByTimeout,
+    });
 
     return composeOutput(command, outcome, softWarnings, timeoutMs);
   },

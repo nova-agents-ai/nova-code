@@ -24,6 +24,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type ConfigSource, getSessionsDirPath } from "../../config/config.ts";
+import { logEvent } from "../../services/analytics/index.ts";
 import type { NovaMessage } from "../../types/message.ts";
 import type { SessionMeta } from "./ChatSession.ts";
 
@@ -122,6 +123,9 @@ export async function loadSession(
   if (meta === undefined) {
     throw new Error(`Empty or meta-less session file: ${path}`);
   }
+  logEvent("tengu_session_file_read", {
+    messageCount: messages.length,
+  });
   return { meta, messages };
 }
 
