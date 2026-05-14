@@ -71,7 +71,8 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "release:tag": "bun run scripts/release-tag.ts",
-    "prepublishOnly": "bun run typecheck && bun run check && bun test && bun run build:lib"
+    "prepublishOnly": "bun run typecheck && bun run check && bun test && bun run build:lib",
+    "perf:baseline": "bun run scripts/perf-baseline.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",
