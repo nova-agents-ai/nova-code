@@ -92,7 +92,7 @@ export NOVA_MODEL="claude-sonnet-4-5-20250929"
 ```bash
 nova-code                      # 等价于 --help
 nova-code --help               # 打印帮助
-nova-code --version            # 打印 nova-code v1.0.0
+nova-code --version            # 打印当前 package.json 版本，例如 nova-code v0.7.0
 nova-code hello [name]         # 打招呼，默认 world
 nova-code echo <text...>       # 回显参数
 nova-code ask [question]       # 单轮 LLM 问答（支持 stdin 管道）
@@ -181,7 +181,7 @@ nova-code ask --debug-pretty "帮我读一下 README.md 开头 20 行"
 
 ```bash
 $ nova-code chat
-nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250929）
+nova-code chat（session: 3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10, model: claude-sonnet-4-5-20250929）
 输入 /help 查看命令；Ctrl+C 取消当前请求、双按退出；Ctrl+D 直接退出。
 
 > 你好，我叫 levin。
@@ -224,7 +224,7 @@ nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250
 # 假设上一轮在会话里做过 /save my-plan
 nova-code chat --resume my-plan
 # 或直接用原始 sessionId
-nova-code chat --resume 20260504-120030-ab12cd
+nova-code chat --resume 3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10
 ```
 
 - `--resume` 缺参数 → 打印 `chat: --resume requires <id|alias>` 并退出码 1。
@@ -250,7 +250,7 @@ nova-code chat --debug
 格式：**每行一个 JSON 对象**，首行 `meta`，其余均为 `msg`。
 
 ```jsonl
-{"kind":"meta","sessionId":"20260504-120030-ab12cd","model":"claude-sonnet-4-5-20250929","createdAt":"2026-05-04T12:00:30.123Z"}
+{"kind":"meta","sessionId":"3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10","model":"claude-sonnet-4-5-20250929","createdAt":"2026-05-04T12:00:30.123Z"}
 {"kind":"msg","role":"user","content":"你好，我叫 levin。"}
 {"kind":"msg","role":"assistant","content":[{"type":"text","text":"你好 levin！..."}]}
 {"kind":"msg","role":"user","content":"列出 README.md 前 20 行"}
@@ -260,6 +260,7 @@ nova-code chat --debug
 约束：
 - **首条非空行**必须是 `{"kind":"meta",...}`，否则 `/load` / `--resume` 会抛 `Expected first non-empty line to be meta...`。
 - `meta` 行必须提供 `sessionId`、`model`、`createdAt` 三个非空字符串字段。
+- M6.5 起新建会话的 `sessionId` 是 UUID v4；历史 timestamp 形态文件仍可 `/load` / `--resume`。
 - `msg.role` 只能是 `"user"` 或 `"assistant"`；`content` 可以是字符串或数组（数组元素对应 Anthropic content block）。
 - 空行会被忽略（方便手工 `vim` 编辑后保留空白）。
 - `/save` 语义是**覆盖写整份快照**，不是 append。M2 先做最稳的形态。
@@ -308,15 +309,15 @@ jq -c . ~/.nova-code/sessions/my-plan.jsonl
 cd /path/to/nova-code
 export NOVA_API_KEY="sk-ant-xxxxxxxxxxxx"
 bun install
-bun run start -- --version        # 应该输出 nova-code v1.0.0
+bun run start -- --version        # 应该输出当前 package.json 版本，例如 nova-code v0.7.0
 ```
 
 ### 9.2 Scene A：新建会话 → 多轮 → /save alias → /exit
 
 ```text
 $ bun run start -- chat --debug
-[debug] log file: /Users/levin/.nova-code/logs/chat-2026-05-04T120030-xxx.log
-nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250929）
+[debug] log file: /Users/levin/.nova-code/logs/chat-2026-05-04T12-00-30-3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10.log
+nova-code chat（session: 3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10, model: claude-sonnet-4-5-20250929）
 输入 /help 查看命令；Ctrl+C 取消当前请求、双按退出；Ctrl+D 直接退出。
 
 > 我在写一个 TODO list 应用，先记住我打算用 React + Vite。
@@ -332,7 +333,7 @@ nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250
   ...
 
 > /save my-todo-plan
-已保存到 /Users/levin/.nova-code/sessions/20260504-120030-ab12cd.jsonl
+已保存到 /Users/levin/.nova-code/sessions/3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10.jsonl
 别名副本：/Users/levin/.nova-code/sessions/my-todo-plan.jsonl
 
 > /exit
@@ -346,7 +347,7 @@ nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250
 
 ```text
 $ bun run start -- chat --resume my-todo-plan
-nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250929）
+nova-code chat（session: 3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10, model: claude-sonnet-4-5-20250929）
 输入 /help 查看命令；Ctrl+C 取消当前请求、双按退出；Ctrl+D 直接退出。
 
 > 我们刚才讨论的是什么项目？用哪个框架？
@@ -365,7 +366,7 @@ nova-code chat（session: 20260504-120030-ab12cd, model: claude-sonnet-4-5-20250
 
 ```text
 $ bun run start -- chat
-nova-code chat（session: 20260504-121500-ef34gh, model: claude-sonnet-4-5-20250929）
+nova-code chat（session: 7a1c6d22-7b5e-4f5c-8c34-2d1c0e7f9a11, model: claude-sonnet-4-5-20250929）
 输入 /help 查看命令；Ctrl+C 取消当前请求、双按退出；Ctrl+D 直接退出。
 
 > 这是一个全新的会话。
@@ -373,7 +374,7 @@ nova-code chat（session: 20260504-121500-ef34gh, model: claude-sonnet-4-5-20250
 
 > /load my-todo-plan
 当前会话将被替换，继续？(y/n) y
-已加载会话 20260504-120030-ab12cd（4 条消息）。
+已加载会话 3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10（4 条消息）。
 
 > 现在记得我们的项目吗？
 记得，是一个基于 React + Vite 的 TODO list 应用。

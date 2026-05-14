@@ -1,4 +1,4 @@
-# nova-code 路线图 v2.7
+# nova-code 路线图 v2.8
 
 > 渐进对齐 → 改进 → 超越
 >
@@ -198,12 +198,20 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 - 测试：新增 TodoWrite 单测、QueryEngine prompt 注入测试、integration TodoWrite、`m6-e2e-todowrite`；全量 631 tests 通过
 - 详见 `docs/design/M6-todowrite.md`、使用手册 `docs/manual/M6-usage-guide.md`、实现架构 `docs/architecture/M6-architecture.md`
 
-### M6.5 — 重构窗口 #2 + Phase 1 收官
+### M6.5 — 重构窗口 #2 + Phase 1 收官 ✅（已完成）
 
-- 完整 e2e 套件覆盖 M1-M6 主路径
-- 性能 baseline（启动时间 / 单工具调用延迟）
-- **sessionId 对齐**：`generateSessionId` 统一切换为 `randomUUID()`（UUID v4），对齐 claude-code（§7.0）。现实现的 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` 是 M2 历史偏离；新旧会话文件可并存（`assertSafeFileName` 只校验路径穿越，UUID v4 合法）。顺带更新 `sessionId.test.ts` 断言与 `docs/manual/M2-usage-guide.md` 示例。
-- 发布 **v0.5.0 — Daily Driver**：作者本人完全脱离 claude-code 自用 1 个月
+- 完整 e2e 套件覆盖 M1-M6 主路径 ✅
+- 性能 baseline（启动时间 / 单工具调用延迟）✅
+- **sessionId 对齐**：`generateSessionId` 统一切换为 `randomUUID()`（UUID v4），对齐 claude-code（§7.0）。历史 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` 会话文件可继续 `/load` / `--resume`。✅
+- 发布准备：Phase 1 已具备 Daily Driver 自用入口；实际 git tag / release 由独立发布流程执行。
+
+**交付摘要**：
+- `src/commands/ChatCommand/sessionId.ts` 改用 `crypto.randomUUID()`，并新增 UUID v4 校验 helper；`sessionId.test.ts` 改为 UUID v4 断言
+- `sessionStore` 保持宽松读取，新增 legacy timestamp sessionId 往返测试，确保旧会话文件可并存
+- `m2-e2e-chat` 断言 `/save` 主文件名为 UUID v4；`docs/manual/M2-usage-guide.md` 示例同步为 UUID v4
+- 新增 `src/m6-5-e2e-phase1.test.ts`，覆盖 M3 ask 默认权限与 `--dangerously-skip-permissions` 真实子进程路径
+- 新增 `src/services/performance/perfBaseline.ts` 与 `bun run perf:baseline`，记录启动耗时和 mock 单工具闭环耗时；baseline 见 `docs/performance/M6.5-baseline.md`
+- 详见 `docs/design/M6.5-phase1-stabilization.md`、使用手册 `docs/manual/M6.5-usage-guide.md`、实现架构 `docs/architecture/M6.5-architecture.md`
 
 **Phase 1 退出标准**：自用 1 个月，记录所有"想要但没有"的 claude-code 功能 → 作为 Phase 2 的优先级输入。
 
@@ -432,7 +440,7 @@ Phase 3 不预设具体顺序。
 | `src/llm/query.ts` | `src/QueryEngine.ts`（`src/query.ts` 是另一个文件） | M1.5 重命名（与 retry/transport 抽取一起） |
 | `src/llm/` 命名空间整体 | claude-code 无 `llm/` 子命名空间，所有都在 `src/` 顶层 | M1.5 完成后 `src/llm/` 应消失 |
 | `src/cli.ts`（自创） | claude-code 是 `src/main.tsx` + `src/cli/` 目录（含子模块） | M1.5 / M2 阶段对齐 |
-| `sessionId` 用 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` | claude-code 统一 `randomUUID()`（UUID v4） | M6.5 切换为 `randomUUID()`（波及面小，历史文件可并存） |
+| `sessionId` 曾用 `<YYYY-MM-DDTHH-mm-ss>-<hex8>` | claude-code 统一 `randomUUID()`（UUID v4） | ✅ M6.5 已切换；历史文件可并存 |
 
 > 这些偏离是 M0 早期没有此原则时的产物。**M1 实施时必须同步修复**，不再扩大。
 
@@ -477,6 +485,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.8**（2026-05-14）：M6.5 Phase 1 稳定化窗口落地。`generateSessionId` 改用 UUID v4 并保留历史 timestamp 会话加载兼容；补齐 M3 权限主路径子进程 e2e，形成 M1-M6 e2e 覆盖矩阵；新增 `perf:baseline` 脚本和 `docs/performance/M6.5-baseline.md`，记录启动与单工具调用延迟；更新 M2 使用手册 sessionId 示例；新增 M6.5 设计文档 / 使用手册 / 架构快照。
 - **v2.7**（2026-05-14）：M6 TodoWrite 工具落地。新增 `src/tools/TodoWriteTool/`，对齐 claude-code 的 `TodoWrite({ todos })` 输入 shape 与 `pending/in_progress/completed` 三态；进程内任务表支持完整 list 替换与全部完成后清空；system prompt 在工具可用时追加 TodoWrite guidance；ask/chat 对 TodoWrite 成功结果渲染 ASCII todo list；mock transport 新增 `todo-loop` 场景并补 e2e；新增 M6 设计文档 / 使用手册 / 架构快照；全量 631 tests 通过。
 - **v2.6**（2026-05-14）：M5 Cost / Config CLI / init 落地。新增 `src/services/cost`（静态 Anthropic 价格快照、`CostTracker`、`~/.nova-code/cost.jsonl` ledger）；chat 退出打印 `[cost]` 摘要并记录普通 turn + auto compact + manual `/compact` 的 usage；新增 `nova-code cost [--json]`、`nova-code config get|set`（apiKey 脱敏、正整数校验）、`nova-code init [--force]`（最小 CLAUDE.md 模板）；`compact_end` 事件可选携带 `usage?: ApiUsage`；新增 M5 设计文档 / 使用手册 / 架构快照；全量 616 tests 通过。
 - **v2.5**（2026-05-12）：M4 上下文压缩 + CLAUDE.md 注入落地。阈值 167K 自动 compact + circuit breaker（失败 3 次停用） + `/compact` 手动 + claude-code 同款 prompt 模板 + token 锚点估算（SDK usage + chars/4）；CLAUDE.md 4 层（managed → user → project chain → local chain）+ `@include` 递归（深度上限 5 + 循环检测）启动时一次注入 system prompt；@include 解析与 HTML comment 剥离用 marked Lexer 复刻 claude-code 同款（支持 inline @path、fragment 剥离、escaped space、TEXT_FILE_EXTENSIONS 白名单）；新增 `services/analytics` 子系统复刻 claude-code 的 `logEvent(name, payload)` 接口（环形 buffer + 可选 JSONL 落盘 + `NOVA_DISABLE_TELEMETRY` / `NOVA_TELEMETRY_FILE` 开关），事件名沿用 `tengu_*` 前缀；新增 `compact_start` / `compact_end` AgentEvent；ChatSession.compact() 用快照+成功才提交避免半提交；partialCompact 同步落地作为 roadmap 失败信号回退方案；约 104 条新单测 + 4 条 e2e；详见 `docs/design/M4-compact.md`、使用手册 `docs/manual/M4-usage-guide.md`、实现架构 `docs/architecture/M4/README.md`

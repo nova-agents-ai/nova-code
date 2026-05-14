@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BIN_PATH = fileURLToPath(new URL("../bin/nova-code.ts", import.meta.url));
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** spawn chat 子进程并喂 stdin 全部行；等待退出后返回 stdout/stderr。 */
 async function runChatChild(params: {
@@ -111,6 +112,7 @@ describe("m2-e2e-chat", () => {
     expect(files).toContain("alias-a.jsonl");
     const sessionIdFile = files.find((f) => f !== "alias-a.jsonl" && f.endsWith(".jsonl"));
     expect(sessionIdFile, `sessionId jsonl not found in ${files.join(",")}`).toBeDefined();
+    expect(sessionIdFile?.replace(/\.jsonl$/, "")).toMatch(UUID_V4_PATTERN);
 
     // alias 文件首行必须是 meta
     const aliasContent = await readFile(join(sessionsDir, "alias-a.jsonl"), "utf8");

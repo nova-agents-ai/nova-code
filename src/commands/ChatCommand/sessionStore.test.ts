@@ -24,7 +24,7 @@ async function makeTempHome(): Promise<{
 }
 
 const FIXED_META: SessionMeta = {
-  sessionId: "2026-05-04T10-00-00-deadbeef",
+  sessionId: "3f4e2b70-8f4a-4d47-9e4f-2c3b7f7a8e10",
   model: "claude-test",
   createdAt: "2026-05-04T10:00:00.000Z",
 };
@@ -37,6 +37,22 @@ describe("sessionStore - save/load 往返", () => {
       await saveSession(FIXED_META.sessionId, snap, { homeDir });
       const loaded = await loadSession(FIXED_META.sessionId, { homeDir });
       expect(loaded).toEqual(snap);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("历史 timestamp sessionId 文件仍可加载（M6.5 向后兼容）", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      const legacyMeta: SessionMeta = {
+        ...FIXED_META,
+        sessionId: "2026-05-04T10-00-00-deadbeef",
+      };
+      const snap: SessionSnapshot = { meta: legacyMeta, messages: [] };
+      await saveSession(legacyMeta.sessionId, snap, { homeDir });
+      const loaded = await loadSession(legacyMeta.sessionId, { homeDir });
+      expect(loaded.meta.sessionId).toBe(legacyMeta.sessionId);
     } finally {
       await cleanup();
     }
