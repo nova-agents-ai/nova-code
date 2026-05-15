@@ -15,15 +15,23 @@ export interface RunConfigCommandOptions {
   readonly io?: ConfigCommandIO;
 }
 
-const CONFIG_KEYS = ["apiKey", "baseURL", "model", "maxTokens", "maxTurns"] as const;
+const CONFIG_KEYS = [
+  "apiKey",
+  "baseURL",
+  "model",
+  "maxTokens",
+  "maxTurns",
+  "webProxy",
+  "webProxyDomains",
+] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 
 export const configCommand: CommandDefinition = {
   name: "config",
   description: "读取或更新 ~/.nova-code/config.json",
   usage:
-    "nova-code config get [apiKey|baseURL|model|maxTokens|maxTurns]\n" +
-    "nova-code config set <apiKey|baseURL|model|maxTokens|maxTurns> <value>",
+    "nova-code config get [apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains]\n" +
+    "nova-code config set <apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains> <value>",
   run: (args) => runConfigCommand(args),
 };
 
@@ -132,6 +140,10 @@ function withConfigValue(config: PersistedConfig, key: ConfigKey, value: string)
       return { ...config, maxTokens: Number(parsed) };
     case "maxTurns":
       return { ...config, maxTurns: Number(parsed) };
+    case "webProxy":
+      return { ...config, webProxy: String(parsed) };
+    case "webProxyDomains":
+      return { ...config, webProxyDomains: parseCommaSeparatedList(String(parsed)) };
   }
 }
 
@@ -147,15 +159,39 @@ function parseConfigValue(key: ConfigKey, value: string): string | number {
     }
     return parsed;
   }
+  if (key === "webProxy") {
+    validateProxyUrl(value);
+  }
   if (value.trim() === "") {
     throw new ConfigError(`${key} must not be empty.`);
   }
   return value;
 }
 
-function formatConfigValue(key: ConfigKey, value: string | number | undefined): string {
+function parseCommaSeparatedList(value: string): readonly string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
+
+function validateProxyUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new ConfigError(`webProxy must be a valid URL: ${describeError(error)}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigError(`webProxy must use http or https, got ${url.protocol}.`);
+  }
+}
+
+function formatConfigValue(key: ConfigKey, value: PersistedConfig[ConfigKey] | undefined): string {
   if (value === undefined) return "<unset>";
   if (key === "apiKey") return maskSecret(String(value));
+  if (key === "webProxy") return maskProxyUrl(String(value));
+  if (Array.isArray(value)) return value.join(",");
   return String(value);
 }
 
@@ -163,12 +199,29 @@ function maskConfig(config: PersistedConfig): PersistedConfig {
   return {
     ...config,
     ...(config.apiKey !== undefined ? { apiKey: maskSecret(config.apiKey) } : {}),
+    ...(config.webProxy !== undefined ? { webProxy: maskProxyUrl(config.webProxy) } : {}),
   };
 }
 
 function maskSecret(value: string): string {
   if (value.length <= 4) return "****";
   return `****${value.slice(-4)}`;
+}
+
+function maskProxyUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username !== "") url.username = "****";
+    if (url.password !== "") url.password = "****";
+    return url.toString();
+  } catch (_error) {
+    return "****";
+  }
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function defaultIO(): ConfigCommandIO {

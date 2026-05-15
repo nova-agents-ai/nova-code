@@ -152,6 +152,23 @@ export function requireStringField(
   return value;
 }
 
+/** 从工具入参中提取可选 boolean 字段，类型错误时抛 ToolExecutionError。 */
+export function optionalBooleanField(
+  input: Readonly<Record<string, unknown>>,
+  field: string,
+  toolName: string,
+): boolean | undefined {
+  const value = input[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") {
+    throw new ToolExecutionError(
+      toolName,
+      `Optional field '${field}' must be a boolean. Got ${describeType(value)}.`,
+    );
+  }
+  return value;
+}
+
 /** 把任意 unknown 错误描述为简短字符串，用于错误消息拼接。 */
 export function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
