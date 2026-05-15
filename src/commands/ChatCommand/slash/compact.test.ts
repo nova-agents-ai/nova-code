@@ -25,6 +25,8 @@ const CONFIG: ResolvedConfig = {
   model: "claude-test",
   maxTokens: 1024,
   maxTurns: 5,
+  webProxy: undefined,
+  webProxyDomains: [],
 };
 
 function makeIO(): SlashIO & { written: string[] } {

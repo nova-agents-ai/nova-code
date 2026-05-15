@@ -4,7 +4,7 @@ import type {
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
 
-export type MockScenario = "chat" | "edit-loop" | "todo-loop";
+export type MockScenario = "chat" | "edit-loop" | "todo-loop" | "web-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -103,7 +103,47 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildTodoLoopTurn(body);
   }
 
+  if (scenario === "web-loop") {
+    return buildWebLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildWebLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  const url = process.env["MOCK_WEB_URL"] ?? "http://127.0.0.1:9/missing";
+  if (resultCount === 0) {
+    return {
+      leadingText: "Fetching the target page...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Fetching the target page..."),
+        makeToolUseContent("toolu_web_01", "WebFetch", {
+          url,
+          prompt: "Extract the page summary",
+        }),
+      ],
+    };
+  }
+  if (resultCount === 1) {
+    return {
+      leadingText: "Searching the web...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Searching the web..."),
+        makeToolUseContent("toolu_web_02", "WebSearch", {
+          query: "nova code web tools",
+        }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. Web tools completed.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. Web tools completed."),
+  };
 }
 
 function buildTodoLoopTurn(body: MockRequestBody): MockTurnPlan {

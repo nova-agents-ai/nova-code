@@ -83,7 +83,13 @@ describe("config - loadPersistedConfig", () => {
     const { homeDir, cleanup } = await makeTempHome();
     try {
       await savePersistedConfig(
-        { apiKey: "sk-ant-xxx", model: "claude-haiku-4-5", maxTokens: 4096 },
+        {
+          apiKey: "sk-ant-xxx",
+          model: "claude-haiku-4-5",
+          maxTokens: 4096,
+          webProxy: "http://proxy.example:8080",
+          webProxyDomains: ["example.com", "*.blocked.test"],
+        },
         { homeDir },
       );
       const loaded = await loadPersistedConfig({ homeDir });
@@ -91,6 +97,8 @@ describe("config - loadPersistedConfig", () => {
         apiKey: "sk-ant-xxx",
         model: "claude-haiku-4-5",
         maxTokens: 4096,
+        webProxy: "http://proxy.example:8080",
+        webProxyDomains: ["example.com", "*.blocked.test"],
       });
     } finally {
       await cleanup();
@@ -121,6 +129,20 @@ describe("config - loadPersistedConfig", () => {
     }
   });
 
+  test("webProxy 必须是 http/https URL，webProxyDomains 必须是字符串数组", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      const path = getConfigFilePath({ homeDir });
+      await Bun.write(path, JSON.stringify({ webProxy: "socks5://proxy.example:1080" }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/webProxy.*http or https/);
+
+      await Bun.write(path, JSON.stringify({ webProxyDomains: ["ok.test", 123] }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/webProxyDomains\[1\]/);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("顶层不是对象时抛 ConfigError", async () => {
     const { homeDir, cleanup } = await makeTempHome();
     try {
@@ -140,16 +162,25 @@ describe("config - resolveConfig", () => {
 
   test("环境变量优先于配置文件", () => {
     const result = resolveConfig(
-      { apiKey: "from-file", model: "from-file-model" },
+      {
+        apiKey: "from-file",
+        model: "from-file-model",
+        webProxy: "http://file-proxy.example:8080",
+        webProxyDomains: ["file.example"],
+      },
       {
         env: {
           NOVA_API_KEY: "from-env",
           NOVA_MODEL: "from-env-model",
+          NOVA_WEB_PROXY: "https://env-proxy.example:8443",
+          NOVA_WEB_PROXY_DOMAINS: "env.example, *.blocked.test",
         },
       },
     );
     expect(result.apiKey).toBe("from-env");
     expect(result.model).toBe("from-env-model");
+    expect(result.webProxy).toBe("https://env-proxy.example:8443");
+    expect(result.webProxyDomains).toEqual(["env.example", "*.blocked.test"]);
   });
 
   test("配置文件值生效（无对应 env）", () => {
@@ -159,6 +190,8 @@ describe("config - resolveConfig", () => {
         baseURL: "https://proxy.example.com",
         maxTokens: 2048,
         maxTurns: 5,
+        webProxy: "http://web-proxy.example:8080",
+        webProxyDomains: ["example.com"],
       },
       { env: {} },
     );
@@ -166,6 +199,8 @@ describe("config - resolveConfig", () => {
     expect(result.baseURL).toBe("https://proxy.example.com");
     expect(result.maxTokens).toBe(2048);
     expect(result.maxTurns).toBe(5);
+    expect(result.webProxy).toBe("http://web-proxy.example:8080");
+    expect(result.webProxyDomains).toEqual(["example.com"]);
   });
 
   test("缺省值在 persisted 与 env 都没设时生效", () => {
@@ -174,6 +209,8 @@ describe("config - resolveConfig", () => {
     expect(result.maxTokens).toBe(8192);
     expect(result.maxTurns).toBe(25);
     expect(result.baseURL).toBeUndefined();
+    expect(result.webProxy).toBeUndefined();
+    expect(result.webProxyDomains).toEqual([]);
   });
 });
 
@@ -186,6 +223,8 @@ describe("config - savePersistedConfig", () => {
         model: "claude-haiku-4-5",
         maxTokens: 2048,
         maxTurns: 10,
+        webProxy: "https://proxy.example:8443",
+        webProxyDomains: ["example.com"],
       };
       await savePersistedConfig(config, { homeDir });
       const reloaded = await loadPersistedConfig({ homeDir });

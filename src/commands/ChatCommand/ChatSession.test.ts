@@ -66,6 +66,8 @@ const FIXED_CONFIG: ResolvedConfig = {
   model: "claude-test",
   maxTokens: 1024,
   maxTurns: 5,
+  webProxy: undefined,
+  webProxyDomains: [],
 };
 
 function makeCtx(agentLoop: typeof runAgentLoop): ChatTurnContext {

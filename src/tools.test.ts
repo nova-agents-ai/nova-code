@@ -21,10 +21,12 @@ import {
   GrepTool,
   LSTool,
   TodoWriteTool,
+  WebFetchTool,
+  WebSearchTool,
 } from "./tools.ts";
 
 describe("builtinTools 注册表", () => {
-  test("包含 M6 全部 8 个工具", () => {
+  test("包含 M7 全部 10 个工具", () => {
     const names = builtinTools.map((t) => t.name);
     expect(names).toContain("LS");
     expect(names).toContain("FileRead");
@@ -34,6 +36,8 @@ describe("builtinTools 注册表", () => {
     expect(names).toContain("Grep");
     expect(names).toContain("Glob");
     expect(names).toContain("TodoWrite");
+    expect(names).toContain("WebFetch");
+    expect(names).toContain("WebSearch");
   });
 
   test("findTool 按名严格查找", () => {
@@ -66,6 +70,8 @@ describe("工具命名一致性 smoke test（v2.2 评审 · 代码质量 Issue #
     { tool: GrepTool, expectedName: "Grep" },
     { tool: GlobTool, expectedName: "Glob" },
     { tool: TodoWriteTool, expectedName: "TodoWrite" },
+    { tool: WebFetchTool, expectedName: "WebFetch" },
+    { tool: WebSearchTool, expectedName: "WebSearch" },
   ];
 
   test("name 字段非空且为字符串", () => {

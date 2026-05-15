@@ -4,8 +4,9 @@
  * 与 claude-code 顶层 src/tools.ts 对齐 —— 注册表在顶层，具体实现在
  * src/tools/<ToolName>/<ToolName>.ts。
  *
- * M6 完整内置工具集（8 个）：
+ * M7 完整内置工具集（10 个）：
  * - LS / FileRead / FileWrite / FileEdit / Bash / Grep / Glob / TodoWrite
+ * - WebFetch / WebSearch
  */
 
 import type { Tool } from "./Tool.ts";
@@ -17,6 +18,8 @@ import { GlobTool } from "./tools/GlobTool/GlobTool.ts";
 import { GrepTool } from "./tools/GrepTool/GrepTool.ts";
 import { LSTool } from "./tools/LSTool/LSTool.ts";
 import { TodoWriteTool } from "./tools/TodoWriteTool/TodoWriteTool.ts";
+import { WebFetchTool } from "./tools/WebFetchTool/WebFetchTool.ts";
+import { WebSearchTool } from "./tools/WebSearchTool/WebSearchTool.ts";
 
 /**
  * 内置工具清单。库用户可以选择性使用，也可以传入空数组关闭工具调用。
@@ -31,6 +34,8 @@ export const builtinTools: readonly Tool[] = [
   GrepTool,
   GlobTool,
   TodoWriteTool,
+  WebFetchTool,
+  WebSearchTool,
 ];
 
 /**
@@ -57,4 +62,6 @@ export {
   GrepTool,
   LSTool,
   TodoWriteTool,
+  WebFetchTool,
+  WebSearchTool,
 };

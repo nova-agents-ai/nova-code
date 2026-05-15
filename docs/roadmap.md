@@ -1,8 +1,8 @@
-# nova-code 路线图 v2.8
+# nova-code 路线图 v2.10
 
 > 渐进对齐 → 改进 → 超越
 >
-> 最后更新：2026-05-14
+> 最后更新：2026-05-15
 
 ---
 
@@ -223,10 +223,17 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 
 每个 milestone 比 Phase 1 大，每期约 4-8 周。
 
-### M7 — Web 工具组
+### M7 — Web 工具组 ✅（已完成）
 
 WebFetchTool / WebSearchTool / 网页正文抽取。
 **参照**：`claude-code/src/tools/{WebFetch,WebSearch}/`
+
+- 新增 `src/tools/WebFetchTool/`：公共 HTTP(S) fetch、HTML/text/JSON/XML 正文抽取、15s timeout、1MB bytes cap、50K chars cap
+- 新增 `src/tools/WebSearchTool/`：HTML search endpoint 检索、DuckDuckGo `uddg` 结果解析、`allowed_domains` / `blocked_domains` 过滤
+- Web 工具共享 `fetchWebContent()`，默认拒绝 localhost / 私网 / link-local host；本地测试需显式 `NOVA_WEB_ALLOW_PRIVATE_HOSTS=1`
+- mock transport 新增 `NOVA_MOCK_SCENARIO=web-loop`，覆盖 `WebFetch → WebSearch → end_turn` 主循环
+- M7.1 增加 Web proxy routing：`webProxy` / `webProxyDomains` 可配置，`NOVA_WEB_PROXY` / `NOVA_WEB_PROXY_DOMAINS` 可环境覆盖，LLM 可通过 `use_proxy=true` 显式请求代理；代理凭证不会出现在 tool_result 中
+- 详见 `docs/design/M7-web-tools.md`、使用手册 `docs/manual/M7-usage-guide.md`、实现架构 `docs/architecture/M7-architecture.md`
 
 ### M8 — MCP 客户端协议
 
@@ -485,6 +492,8 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.10**（2026-05-15）：M7.1 Web proxy routing 落地。`PersistedConfig` / `config get|set` 新增 `webProxy` 与 `webProxyDomains`；WebFetch / WebSearch 输入新增 `use_proxy`，允许模型在判断目标站点需要代理时请求使用用户配置的 HTTP(S) proxy；`webProxyConfig.ts` 合并配置文件与环境变量，按域名后缀或 LLM request 决定是否传 Bun `fetch` 的 `proxy` 选项；新增代理路由单测与真实本地 proxy fetch 测试；全量 663 tests 通过。
+- **v2.9**（2026-05-14）：M7 Web 工具组落地。新增 `WebFetch` / `WebSearch` 两个内置只读工具，工具注册表扩展到 10 个；`fetchWebContent()` 集中处理 HTTP(S) 校验、private/local host guard、timeout、content-type 与截断；WebFetch 支持轻量 HTML 正文抽取，WebSearch 支持 HTML endpoint、DuckDuckGo `uddg` 解析与域名 allow/block；mock transport 新增 `web-loop` 场景并补本地 HTTP fixture e2e；新增 M7 设计文档 / 使用手册 / 架构快照；全量 653 tests 通过。
 - **v2.8**（2026-05-14）：M6.5 Phase 1 稳定化窗口落地。`generateSessionId` 改用 UUID v4 并保留历史 timestamp 会话加载兼容；补齐 M3 权限主路径子进程 e2e，形成 M1-M6 e2e 覆盖矩阵；新增 `perf:baseline` 脚本和 `docs/performance/M6.5-baseline.md`，记录启动与单工具调用延迟；更新 M2 使用手册 sessionId 示例；新增 M6.5 设计文档 / 使用手册 / 架构快照。
 - **v2.7**（2026-05-14）：M6 TodoWrite 工具落地。新增 `src/tools/TodoWriteTool/`，对齐 claude-code 的 `TodoWrite({ todos })` 输入 shape 与 `pending/in_progress/completed` 三态；进程内任务表支持完整 list 替换与全部完成后清空；system prompt 在工具可用时追加 TodoWrite guidance；ask/chat 对 TodoWrite 成功结果渲染 ASCII todo list；mock transport 新增 `todo-loop` 场景并补 e2e；新增 M6 设计文档 / 使用手册 / 架构快照；全量 631 tests 通过。
 - **v2.6**（2026-05-14）：M5 Cost / Config CLI / init 落地。新增 `src/services/cost`（静态 Anthropic 价格快照、`CostTracker`、`~/.nova-code/cost.jsonl` ledger）；chat 退出打印 `[cost]` 摘要并记录普通 turn + auto compact + manual `/compact` 的 usage；新增 `nova-code cost [--json]`、`nova-code config get|set`（apiKey 脱敏、正整数校验）、`nova-code init [--force]`（最小 CLAUDE.md 模板）；`compact_end` 事件可选携带 `usage?: ApiUsage`；新增 M5 设计文档 / 使用手册 / 架构快照；全量 616 tests 通过。

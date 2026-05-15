@@ -166,6 +166,8 @@ const baseConfig: ResolvedConfig = {
   maxTokens: 1024,
   // 5 轮足够覆盖最长场景（4 轮工具调用 + 1 轮 end_turn）
   maxTurns: 5,
+  webProxy: undefined,
+  webProxyDomains: [],
 };
 
 let workDir: string;

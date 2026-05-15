@@ -169,6 +169,8 @@ const baseConfig: ResolvedConfig = {
   model: "claude-test",
   maxTokens: 1024,
   maxTurns: 5,
+  webProxy: undefined,
+  webProxyDomains: [],
 };
 
 function makeEchoTool(): Tool {

@@ -47,6 +47,8 @@ const COST_LEDGER_FILE_NAME = "cost.jsonl";
 const ENV_API_KEY = "NOVA_API_KEY";
 const ENV_BASE_URL = "NOVA_BASE_URL";
 const ENV_MODEL = "NOVA_MODEL";
+const ENV_WEB_PROXY = "NOVA_WEB_PROXY";
+const ENV_WEB_PROXY_DOMAINS = "NOVA_WEB_PROXY_DOMAINS";
 
 /**
  * 用户可写入磁盘的配置 schema。
@@ -58,6 +60,10 @@ export interface PersistedConfig {
   readonly model?: string;
   readonly maxTokens?: number;
   readonly maxTurns?: number;
+  /** M7.1: optional HTTP(S) proxy used by WebFetch/WebSearch when routing rules match. */
+  readonly webProxy?: string;
+  /** M7.1: host suffixes that should use webProxy, e.g. ["example.com", "*.blocked.test"]. */
+  readonly webProxyDomains?: readonly string[];
 }
 
 /**
@@ -70,6 +76,8 @@ export interface ResolvedConfig {
   readonly model: string;
   readonly maxTokens: number;
   readonly maxTurns: number;
+  readonly webProxy: string | undefined;
+  readonly webProxyDomains: readonly string[];
 }
 
 /**
@@ -184,6 +192,11 @@ export function resolveConfig(
     model: env[ENV_MODEL] ?? persisted.model ?? DEFAULT_MODEL,
     maxTokens: persisted.maxTokens ?? DEFAULT_MAX_TOKENS,
     maxTurns: persisted.maxTurns ?? DEFAULT_MAX_TURNS,
+    webProxy: env[ENV_WEB_PROXY] ?? persisted.webProxy,
+    webProxyDomains:
+      env[ENV_WEB_PROXY_DOMAINS] !== undefined
+        ? parseEnvList(env[ENV_WEB_PROXY_DOMAINS])
+        : (persisted.webProxyDomains ?? []),
   };
 }
 
@@ -265,7 +278,59 @@ function validatePersistedConfig(value: unknown, path: string): PersistedConfig 
     result.maxTurns = obj.maxTurns;
   }
 
+  if (obj.webProxy !== undefined) {
+    if (typeof obj.webProxy !== "string" || obj.webProxy.trim() === "") {
+      throw new ConfigError(
+        `Config at ${path}: 'webProxy' must be a non-empty string, got ${typeName(obj.webProxy)}.`,
+      );
+    }
+    assertHttpProxyUrl(obj.webProxy, path);
+    result.webProxy = obj.webProxy;
+  }
+
+  if (obj.webProxyDomains !== undefined) {
+    if (!Array.isArray(obj.webProxyDomains)) {
+      throw new ConfigError(
+        `Config at ${path}: 'webProxyDomains' must be an array, got ${typeName(obj.webProxyDomains)}.`,
+      );
+    }
+    result.webProxyDomains = obj.webProxyDomains.map((item, index) =>
+      validateDomainPattern(item, `Config at ${path}: 'webProxyDomains[${index}]'`),
+    );
+  }
+
   return result;
+}
+
+function parseEnvList(value: string | undefined): readonly string[] {
+  if (value === undefined || value.trim() === "") return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
+
+function assertHttpProxyUrl(value: string, path: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new ConfigError(
+      `Config at ${path}: 'webProxy' must be a valid URL: ${describeError(error)}.`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigError(
+      `Config at ${path}: 'webProxy' must use http or https, got ${url.protocol}.`,
+    );
+  }
+}
+
+function validateDomainPattern(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ConfigError(`${field} must be a non-empty string, got ${typeName(value)}.`);
+  }
+  return value.trim();
 }
 
 function isFileNotFoundError(error: unknown): boolean {

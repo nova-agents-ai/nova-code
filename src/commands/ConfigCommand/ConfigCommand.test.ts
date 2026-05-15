@@ -80,6 +80,35 @@ describe("config command", () => {
     }
   });
 
+  test("set webProxy / webProxyDomains 写入配置，get webProxy 会脱敏凭证", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    const capture = createCapture();
+    try {
+      const io = {
+        stdout: (text: string) => capture.stdout.push(text),
+        stderr: (text: string) => capture.stderr.push(text),
+      };
+      await runConfigCommand(["set", "webProxy", "http://user:pass@proxy.example:8080"], {
+        configSource: { homeDir },
+        io,
+      });
+      await runConfigCommand(["set", "webProxyDomains", "example.com, *.blocked.test"], {
+        configSource: { homeDir },
+        io,
+      });
+
+      const stored = await loadPersistedConfig({ homeDir });
+      expect(stored.webProxy).toBe("http://user:pass@proxy.example:8080");
+      expect(stored.webProxyDomains).toEqual(["example.com", "*.blocked.test"]);
+
+      capture.stdout.length = 0;
+      await runConfigCommand(["get", "webProxy"], { configSource: { homeDir }, io });
+      expect(capture.stdout.join("")).toBe("http://****:****@proxy.example:8080/\n");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("set maxTokens 非正整数时返回 1", async () => {
     const { homeDir, cleanup } = await makeTempHome();
     const capture = createCapture();
@@ -93,6 +122,24 @@ describe("config command", () => {
       });
       expect(exitCode).toBe(1);
       expect(capture.stderr.join("")).toContain("positive integer");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("set webProxy 非 http/https URL 时返回 1", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    const capture = createCapture();
+    try {
+      const exitCode = await runConfigCommand(["set", "webProxy", "socks5://127.0.0.1:1080"], {
+        configSource: { homeDir },
+        io: {
+          stdout: (text) => capture.stdout.push(text),
+          stderr: (text) => capture.stderr.push(text),
+        },
+      });
+      expect(exitCode).toBe(1);
+      expect(capture.stderr.join("")).toContain("http or https");
     } finally {
       await cleanup();
     }
