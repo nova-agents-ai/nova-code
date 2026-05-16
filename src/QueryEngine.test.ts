@@ -171,6 +171,7 @@ const baseConfig: ResolvedConfig = {
   maxTurns: 5,
   webProxy: undefined,
   webProxyDomains: [],
+  mcpServers: {},
 };
 
 function makeEchoTool(): Tool {

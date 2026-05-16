@@ -19,6 +19,7 @@ import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
 import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
+import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
@@ -55,6 +56,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
   const llmLogSink: DebugSink = options.debug
     ? createFileDebugSink({ pretty: options.pretty, prefix: "ask-llm" })
     : NULL_DEBUG_SINK;
+  let mcpRegistry: McpToolRegistry | undefined;
 
   try {
     if (options.debug && debugSink.logFilePath !== null) {
@@ -69,6 +71,11 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     }
 
     const config = await loadConfig();
+    mcpRegistry = await createMcpToolRegistry(config);
+    for (const warning of mcpRegistry.warnings) {
+      process.stderr.write(`[mcp] ${warning}\n`);
+    }
+    const tools = [...builtinTools, ...mcpRegistry.tools];
     // 加载三层权限规则；headless 模式下依然有 project/global 预先写入的规则
     const permissionStore = await PermissionStore.load(process.cwd());
     // headless provider：所有 ask 档统一 deny，在 stderr 留一行提示
@@ -83,6 +90,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       model: config.model,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
       hasProjectInstructions: projectInstructions !== undefined,
+      mcpToolCount: mcpRegistry.tools.length,
     });
     let inAssistantText = false;
 
@@ -99,7 +107,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     const generator = runAgentLoop({
       config,
       userPrompt: question,
-      tools: builtinTools,
+      tools,
       signal: abortController.signal,
       llmLogSink: options.debug ? llmLogSink : undefined,
       // ask 默认 acceptEdits：FileWrite/FileEdit 直接放行（便于常见 "生成代码"
@@ -194,6 +202,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
   } finally {
     debugSink.close();
     llmLogSink.close();
+    await mcpRegistry?.close();
     process.removeListener("SIGINT", onSigint);
   }
 }

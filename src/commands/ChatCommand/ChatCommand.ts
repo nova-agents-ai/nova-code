@@ -17,6 +17,7 @@ import { ConfigError } from "../../errors/index.ts";
 import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts";
+import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { builtinTools } from "../../tools.ts";
@@ -98,6 +99,7 @@ export const chatCommand: CommandDefinition = {
           sessionId: session.meta.sessionId,
         })
       : NULL_DEBUG_SINK;
+    let mcpRegistry: McpToolRegistry | undefined;
 
     // 加载三层权限规则（session + project + global）。
     // 文件不存在/空不是错；ConfigError 走与 loadConfig 同样的退出码 1 通道。
@@ -113,6 +115,11 @@ export const chatCommand: CommandDefinition = {
     }
 
     try {
+      mcpRegistry = await createMcpToolRegistry(config);
+      for (const warning of mcpRegistry.warnings) {
+        process.stderr.write(`[mcp] ${warning}\n`);
+      }
+
       if (debug && debugSink.logFilePath !== null) {
         process.stderr.write(`[debug] log file: ${debugSink.logFilePath}\n`);
         if (llmLogSink.logFilePath !== null) {
@@ -132,12 +139,13 @@ export const chatCommand: CommandDefinition = {
         resumed: resumeId !== undefined,
         dangerouslySkipPermissions,
         hasProjectInstructions: projectInstructions !== undefined,
+        mcpToolCount: mcpRegistry.tools.length,
       });
 
       const exitCode = await runChatRepl({
         session,
         config,
-        tools: builtinTools,
+        tools: [...builtinTools, ...mcpRegistry.tools],
         debugSink,
         llmLogSink: debug ? llmLogSink : undefined,
         permissionStore,
@@ -157,6 +165,7 @@ export const chatCommand: CommandDefinition = {
     } finally {
       debugSink.close();
       llmLogSink.close();
+      await mcpRegistry?.close();
     }
   },
 };

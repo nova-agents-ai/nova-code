@@ -200,7 +200,26 @@ function maskConfig(config: PersistedConfig): PersistedConfig {
     ...config,
     ...(config.apiKey !== undefined ? { apiKey: maskSecret(config.apiKey) } : {}),
     ...(config.webProxy !== undefined ? { webProxy: maskProxyUrl(config.webProxy) } : {}),
+    ...(config.mcpServers !== undefined ? { mcpServers: maskMcpServers(config.mcpServers) } : {}),
   };
+}
+
+function maskMcpServers(
+  servers: NonNullable<PersistedConfig["mcpServers"]>,
+): NonNullable<PersistedConfig["mcpServers"]> {
+  return Object.fromEntries(
+    Object.entries(servers).map(([name, server]) => [
+      name,
+      {
+        ...server,
+        ...(server.env !== undefined ? { env: maskEnv(server.env) } : {}),
+      },
+    ]),
+  );
+}
+
+function maskEnv(env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.keys(env).map((key) => [key, "****"]));
 }
 
 function maskSecret(value: string): string {
