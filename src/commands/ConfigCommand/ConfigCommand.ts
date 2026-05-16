@@ -212,14 +212,21 @@ function maskMcpServers(
       name,
       {
         ...server,
-        ...(server.env !== undefined ? { env: maskEnv(server.env) } : {}),
+        ...("env" in server && server.env !== undefined
+          ? { env: maskStringRecord(server.env) }
+          : {}),
+        ...("headers" in server && server.headers !== undefined
+          ? { headers: maskStringRecord(server.headers) }
+          : {}),
       },
     ]),
   );
 }
 
-function maskEnv(env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
-  return Object.fromEntries(Object.keys(env).map((key) => [key, "****"]));
+function maskStringRecord(
+  values: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.keys(values).map((key) => [key, "****"]));
 }
 
 function maskSecret(value: string): string {

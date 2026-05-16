@@ -121,6 +121,11 @@ describe("config command", () => {
               args: ["@modelcontextprotocol/server-brave-search"],
               env: { BRAVE_API_KEY: "secret-token" },
             },
+            remote: {
+              type: "http",
+              url: "https://mcp.example/mcp",
+              headers: { Authorization: "Bearer secret-token" },
+            },
           },
         },
         { homeDir },
@@ -135,6 +140,7 @@ describe("config command", () => {
 
       expect(exitCode).toBe(0);
       expect(capture.stdout.join("")).toContain('"BRAVE_API_KEY": "****"');
+      expect(capture.stdout.join("")).toContain('"Authorization": "****"');
       expect(capture.stdout.join("")).not.toContain("secret-token");
     } finally {
       await cleanup();

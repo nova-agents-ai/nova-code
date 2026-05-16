@@ -1,7 +1,19 @@
 /** Minimal MCP stdio JSON-RPC client for tools/list and tools/call. */
 
-import type { ToolInputSchema } from "../../Tool.ts";
-import type { McpStdioServerConfig } from "./types.ts";
+import { buildMcpProcessEnv } from "./environment.ts";
+import {
+  getErrorMessage,
+  isJsonRpcNotification,
+  isJsonRpcRequest,
+  isJsonRpcResponse,
+  isRecord,
+  type JsonRpcResponse,
+  McpProtocolError,
+  parseCallToolResult,
+  parseInitializeResult,
+  parseListToolsResult,
+} from "./protocol.ts";
+import type { McpClient, McpNotificationListener, McpStdioServerConfig } from "./types.ts";
 import {
   MCP_PROTOCOL_VERSION,
   type McpCallToolResult,
@@ -10,25 +22,14 @@ import {
   type McpToolDefinition,
 } from "./types.ts";
 
+export { McpProtocolError } from "./protocol.ts";
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_STDERR_CHARS = 8_000;
 const CLIENT_NAME = "nova-code";
 const CLIENT_VERSION = "0.8.0";
 
 type RequestId = number;
-
-interface JsonRpcResponse {
-  readonly jsonrpc: "2.0";
-  readonly id: RequestId;
-  readonly result?: unknown;
-  readonly error?: JsonRpcErrorPayload;
-}
-
-interface JsonRpcErrorPayload {
-  readonly code: number;
-  readonly message: string;
-  readonly data?: unknown;
-}
 
 interface PendingRequest {
   readonly method: string;
@@ -43,17 +44,11 @@ interface McpRequestOptions {
   readonly signal?: AbortSignal;
 }
 
-export class McpProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "McpProtocolError";
-  }
-}
-
-export class McpStdioClient {
+export class McpStdioClient implements McpClient {
   private readonly serverName: string;
   private readonly config: McpStdioServerConfig;
   private readonly timeoutMs: number;
+  private readonly notificationListeners = new Set<McpNotificationListener>();
   private nextId = 1;
   private process: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined;
   private stdoutTask: Promise<void> | undefined;
@@ -77,13 +72,24 @@ export class McpStdioClient {
     return this.stderrBuffer;
   }
 
+  get diagnosticSnippet(): string {
+    return this.stderrBuffer;
+  }
+
+  onNotification(listener: McpNotificationListener): () => void {
+    this.notificationListeners.add(listener);
+    return () => {
+      this.notificationListeners.delete(listener);
+    };
+  }
+
   async connect(signal?: AbortSignal): Promise<McpInitializeResult> {
     if (this.process !== undefined) return this.initializeResult ?? (await this.initialize(signal));
     const command = [this.config.command, ...(this.config.args ?? [])];
     this.process = Bun.spawn({
       cmd: command,
       cwd: this.config.cwd,
-      env: buildProcessEnv(this.config.env),
+      env: buildMcpProcessEnv(this.config.env),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -171,8 +177,9 @@ export class McpStdioClient {
   ): Promise<unknown> {
     if (this.closed) throw new McpProtocolError(`MCP server '${this.serverName}' is closed.`);
     const proc = this.process;
-    if (proc === undefined)
+    if (proc === undefined) {
       throw new McpProtocolError(`MCP server '${this.serverName}' not started.`);
+    }
     if (options.signal?.aborted === true) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
@@ -258,22 +265,27 @@ export class McpStdioClient {
     } catch (error) {
       this.failAllPending(
         new McpProtocolError(
-          `MCP server '${this.serverName}' emitted invalid JSON: ${describeError(error)}.`,
+          `MCP server '${this.serverName}' emitted invalid JSON: ${getErrorMessage(error)}.`,
         ),
       );
       return;
     }
     if (!isRecord(parsed)) return;
-    if (typeof parsed["id"] === "number" && ("result" in parsed || "error" in parsed)) {
-      this.handleResponse(parsed as unknown as JsonRpcResponse);
+    if (isJsonRpcResponse(parsed) && typeof parsed.id === "number") {
+      this.handleResponse(parsed as JsonRpcResponse);
       return;
     }
-    if (typeof parsed["method"] === "string" && "id" in parsed) {
+    if (isJsonRpcRequest(parsed)) {
       this.handleServerRequest(parsed);
+      return;
+    }
+    if (isJsonRpcNotification(parsed)) {
+      this.emitNotification(parsed.method, parsed.params);
     }
   }
 
   private handleResponse(response: JsonRpcResponse): void {
+    if (typeof response.id !== "number") return;
     const pending = this.pending.get(response.id);
     if (pending === undefined) return;
     this.pending.delete(response.id);
@@ -296,7 +308,7 @@ export class McpStdioClient {
     const proc = this.process;
     if (proc === undefined) return;
     const id = request["id"];
-    if (typeof id !== "number") return;
+    if (typeof id !== "number" && typeof id !== "string") return;
     const method = request["method"];
     if (method === "ping") {
       proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: {} })}\n`);
@@ -312,6 +324,10 @@ export class McpStdioClient {
         },
       })}\n`,
     );
+  }
+
+  private emitNotification(method: string, params: unknown): void {
+    for (const listener of this.notificationListeners) listener(method, params);
   }
 
   private async readStderr(): Promise<void> {
@@ -362,154 +378,6 @@ export class McpStdioClient {
       pending.reject(error);
     }
   }
-}
-
-function buildProcessEnv(
-  extra: Readonly<Record<string, string>> | undefined,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === "string") env[key] = value;
-  }
-  if (extra === undefined) return env;
-  for (const [key, value] of Object.entries(extra)) {
-    env[key] = expandEnvValue(value, env);
-  }
-  return env;
-}
-
-function expandEnvValue(value: string, env: Readonly<Record<string, string>>): string {
-  return value.replace(
-    /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
-    (_match, name: string) => env[name] ?? "",
-  );
-}
-
-function parseInitializeResult(value: unknown, serverName: string): McpInitializeResult {
-  if (!isRecord(value))
-    throw new McpProtocolError(`MCP server '${serverName}' returned invalid initialize result.`);
-  const protocolVersion = value["protocolVersion"];
-  const capabilities = value["capabilities"];
-  const serverInfo = value["serverInfo"];
-  if (typeof protocolVersion !== "string" || !isRecord(capabilities) || !isRecord(serverInfo)) {
-    throw new McpProtocolError(`MCP server '${serverName}' returned incomplete initialize result.`);
-  }
-  const name = serverInfo["name"];
-  const version = serverInfo["version"];
-  if (typeof name !== "string" || typeof version !== "string") {
-    throw new McpProtocolError(`MCP server '${serverName}' returned invalid serverInfo.`);
-  }
-  return {
-    protocolVersion,
-    capabilities,
-    serverInfo: {
-      name,
-      version,
-      ...(typeof serverInfo["title"] === "string" ? { title: serverInfo["title"] } : {}),
-    },
-    ...(typeof value["instructions"] === "string" ? { instructions: value["instructions"] } : {}),
-  };
-}
-
-function parseListToolsResult(value: unknown, serverName: string): McpListToolsResult {
-  if (!isRecord(value) || !Array.isArray(value["tools"])) {
-    throw new McpProtocolError(`MCP server '${serverName}' returned invalid tools/list result.`);
-  }
-  return {
-    tools: value["tools"].map((item, index) => parseToolDefinition(item, serverName, index)),
-    ...(typeof value["nextCursor"] === "string" ? { nextCursor: value["nextCursor"] } : {}),
-  };
-}
-
-function parseToolDefinition(value: unknown, serverName: string, index: number) {
-  if (!isRecord(value)) {
-    throw new McpProtocolError(
-      `MCP server '${serverName}' returned non-object tool at index ${index}.`,
-    );
-  }
-  const name = value["name"];
-  const inputSchema = value["inputSchema"];
-  if (typeof name !== "string" || !isToolInputSchema(inputSchema)) {
-    throw new McpProtocolError(
-      `MCP server '${serverName}' returned invalid tool at index ${index}.`,
-    );
-  }
-  const parsed = {
-    name,
-    inputSchema,
-    ...(typeof value["title"] === "string" ? { title: value["title"] } : {}),
-    ...(typeof value["description"] === "string" ? { description: value["description"] } : {}),
-    ...("outputSchema" in value ? { outputSchema: value["outputSchema"] } : {}),
-    ...(isRecord(value["annotations"])
-      ? { annotations: parseToolAnnotations(value["annotations"]) }
-      : {}),
-  };
-  return parsed;
-}
-
-function parseToolAnnotations(value: Readonly<Record<string, unknown>>) {
-  return {
-    ...(typeof value["title"] === "string" ? { title: value["title"] } : {}),
-    ...(typeof value["readOnlyHint"] === "boolean" ? { readOnlyHint: value["readOnlyHint"] } : {}),
-    ...(typeof value["destructiveHint"] === "boolean"
-      ? { destructiveHint: value["destructiveHint"] }
-      : {}),
-    ...(typeof value["idempotentHint"] === "boolean"
-      ? { idempotentHint: value["idempotentHint"] }
-      : {}),
-    ...(typeof value["openWorldHint"] === "boolean"
-      ? { openWorldHint: value["openWorldHint"] }
-      : {}),
-  };
-}
-
-function parseCallToolResult(
-  value: unknown,
-  serverName: string,
-  toolName: string,
-): McpCallToolResult {
-  if (!isRecord(value) || !Array.isArray(value["content"])) {
-    throw new McpProtocolError(
-      `MCP server '${serverName}' returned invalid tools/call result for '${toolName}'.`,
-    );
-  }
-  return {
-    content: value["content"].map(parseContentBlock),
-    ...(isRecord(value["structuredContent"])
-      ? { structuredContent: value["structuredContent"] }
-      : {}),
-    ...(typeof value["isError"] === "boolean" ? { isError: value["isError"] } : {}),
-  };
-}
-
-function parseContentBlock(value: unknown) {
-  if (!isRecord(value)) return { type: "unknown" };
-  const type = typeof value["type"] === "string" ? value["type"] : "unknown";
-  return {
-    ...value,
-    type,
-  };
-}
-
-function isToolInputSchema(value: unknown): value is ToolInputSchema {
-  if (!isRecord(value)) return false;
-  if (value["type"] !== "object") return false;
-  const properties = value["properties"];
-  if (properties !== undefined && !isRecord(properties)) return false;
-  const required = value["required"];
-  if (required !== undefined) {
-    return Array.isArray(required) && required.every((item) => typeof item === "string");
-  }
-  return true;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }
 
 function formatStderr(stderr: string): string {

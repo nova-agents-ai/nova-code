@@ -146,6 +146,7 @@ export const chatCommand: CommandDefinition = {
         session,
         config,
         tools: [...builtinTools, ...mcpRegistry.tools],
+        getTools: () => [...builtinTools, ...(mcpRegistry?.tools ?? [])],
         debugSink,
         llmLogSink: debug ? llmLogSink : undefined,
         permissionStore,

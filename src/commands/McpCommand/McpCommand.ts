@@ -1,4 +1,4 @@
-/** `nova-code mcp`：管理 MCP stdio servers and inspect bridged tools. */
+/** `nova-code mcp`：管理 MCP servers and inspect bridged tools. */
 
 import {
   type ConfigSource,
@@ -9,7 +9,11 @@ import {
 } from "../../config/config.ts";
 import { ConfigError } from "../../errors/index.ts";
 import { createMcpToolRegistryFromServers } from "../../services/mcp/index.ts";
-import type { McpStdioServerConfig } from "../../services/mcp/types.ts";
+import type {
+  McpServerConfig,
+  McpStdioServerConfig,
+  McpStreamableHttpServerConfig,
+} from "../../services/mcp/types.ts";
 import type { CommandDefinition } from "../types.ts";
 
 interface McpCommandIO {
@@ -24,10 +28,11 @@ export interface RunMcpCommandOptions {
 
 export const mcpCommand: CommandDefinition = {
   name: "mcp",
-  description: "管理 MCP stdio server 配置并查看可用 MCP 工具",
+  description: "管理 MCP server 配置并查看可用 MCP 工具",
   usage:
     "nova-code mcp list\n" +
     "nova-code mcp add <name> [--auto-approve] [--timeout-ms <ms>] [--cwd <dir>] [--env KEY=VALUE] -- <command> [args...]\n" +
+    "nova-code mcp add-http <name> [--auto-approve] [--timeout-ms <ms>] [--header KEY=VALUE] <url>\n" +
     "nova-code mcp remove <name>\n" +
     "nova-code mcp tools",
   run: (args) => runMcpCommand(args),
@@ -50,6 +55,7 @@ export async function runMcpCommand(
       case "list":
         return await runList(options, io);
       case "add":
+      case "add-http":
         return await runAdd(action, options, io);
       case "remove":
         return await runRemove(action.name, options, io);
@@ -71,9 +77,9 @@ type ParsedMcpAction =
   | { readonly ok: true; readonly kind: "remove"; readonly name: string }
   | {
       readonly ok: true;
-      readonly kind: "add";
+      readonly kind: "add" | "add-http";
       readonly name: string;
-      readonly server: McpStdioServerConfig;
+      readonly server: McpServerConfig;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -83,7 +89,8 @@ function parseMcpAction(args: readonly string[]): ParsedMcpAction {
   if (kind === "tools") return parseNoArgs("tools", rest);
   if (kind === "remove") return parseRemove(rest);
   if (kind === "add") return parseAdd(rest);
-  return { ok: false, message: "expected list, add, remove, or tools" };
+  if (kind === "add-http") return parseAddHttp(rest);
+  return { ok: false, message: "expected list, add, add-http, remove, or tools" };
 }
 
 function parseNoArgs(kind: "tools", rest: readonly string[]): ParsedMcpAction {
@@ -102,8 +109,9 @@ function parseRemove(rest: readonly string[]): ParsedMcpAction {
 
 function parseAdd(rest: readonly string[]): ParsedMcpAction {
   const [name, ...tokens] = rest;
-  if (name === undefined)
+  if (name === undefined) {
     return { ok: false, message: "usage: nova-code mcp add <name> -- <command>" };
+  }
   validateMcpServerName(name);
 
   const parsed = parseAddOptions(tokens);
@@ -112,20 +120,34 @@ function parseAdd(rest: readonly string[]): ParsedMcpAction {
   if (command === undefined || command.trim() === "") {
     return { ok: false, message: "mcp add requires a command after --" };
   }
-  return {
-    ok: true,
-    kind: "add",
-    name,
-    server: {
-      type: "stdio",
-      command,
-      ...(args.length > 0 ? { args } : {}),
-      ...(Object.keys(parsed.env).length > 0 ? { env: parsed.env } : {}),
-      ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
-      ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-      ...(parsed.autoApprove ? { autoApprove: true } : {}),
-    },
+  const server: McpStdioServerConfig = {
+    type: "stdio",
+    command,
+    ...(args.length > 0 ? { args } : {}),
+    ...(Object.keys(parsed.env).length > 0 ? { env: parsed.env } : {}),
+    ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+    ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
+    ...(parsed.autoApprove ? { autoApprove: true } : {}),
   };
+  return { ok: true, kind: "add", name, server };
+}
+
+function parseAddHttp(rest: readonly string[]): ParsedMcpAction {
+  const [name, ...tokens] = rest;
+  if (name === undefined) {
+    return { ok: false, message: "usage: nova-code mcp add-http <name> <url>" };
+  }
+  validateMcpServerName(name);
+  const parsed = parseAddHttpOptions(tokens);
+  if (parsed.ok === false) return parsed;
+  const server: McpStreamableHttpServerConfig = {
+    type: "http",
+    url: parsed.url,
+    ...(Object.keys(parsed.headers).length > 0 ? { headers: parsed.headers } : {}),
+    ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
+    ...(parsed.autoApprove ? { autoApprove: true } : {}),
+  };
+  return { ok: true, kind: "add-http", name, server };
 }
 
 interface ParsedAddOptions {
@@ -186,6 +208,58 @@ function parseAddOptions(tokens: readonly string[]): ParsedAddOptionsResult {
   return { ok: true, command: [], env, cwd, timeoutMs, autoApprove };
 }
 
+interface ParsedAddHttpOptions {
+  readonly ok: true;
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly timeoutMs?: number;
+  readonly autoApprove: boolean;
+}
+
+type ParsedAddHttpOptionsResult =
+  | ParsedAddHttpOptions
+  | { readonly ok: false; readonly message: string };
+
+function parseAddHttpOptions(tokens: readonly string[]): ParsedAddHttpOptionsResult {
+  const headers: Record<string, string> = {};
+  let timeoutMs: number | undefined;
+  let autoApprove = false;
+  let index = 0;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === undefined) break;
+    if (token === "--auto-approve") {
+      autoApprove = true;
+      index += 1;
+      continue;
+    }
+    if (token === "--timeout-ms") {
+      const value = tokens[index + 1];
+      const parsed = parsePositiveInteger(value, "--timeout-ms");
+      if (parsed.ok === false) return parsed;
+      timeoutMs = parsed.value;
+      index += 2;
+      continue;
+    }
+    if (token === "--header") {
+      const value = tokens[index + 1];
+      const parsed = parseHeaderPair(value);
+      if (parsed.ok === false) return parsed;
+      headers[parsed.key] = parsed.value;
+      index += 2;
+      continue;
+    }
+    const url = token;
+    if (tokens[index + 1] !== undefined) return { ok: false, message: "add-http accepts one URL" };
+    const validatedUrl = parseHttpUrl(url);
+    if (validatedUrl.ok === false) return validatedUrl;
+    return { ok: true, url, headers, timeoutMs, autoApprove };
+  }
+
+  return { ok: false, message: "mcp add-http requires a URL" };
+}
+
 function parsePositiveInteger(
   value: string | undefined,
   label: string,
@@ -215,6 +289,32 @@ function parseEnvPair(
   return { ok: true, key, value: value.slice(separator + 1) };
 }
 
+function parseHeaderPair(
+  value: string | undefined,
+):
+  | { readonly ok: true; readonly key: string; readonly value: string }
+  | { readonly ok: false; readonly message: string } {
+  if (value === undefined) return { ok: false, message: "--header requires KEY=VALUE" };
+  const separator = value.indexOf("=");
+  if (separator <= 0) return { ok: false, message: "--header requires KEY=VALUE" };
+  const key = value.slice(0, separator);
+  if (!/^[A-Za-z0-9-]+$/.test(key)) return { ok: false, message: `invalid header key ${key}` };
+  return { ok: true, key, value: value.slice(separator + 1) };
+}
+
+function parseHttpUrl(
+  value: string,
+): { readonly ok: true } | { readonly ok: false; readonly message: string } {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") return { ok: true };
+    return { ok: false, message: "add-http URL must use http or https" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `add-http URL is invalid: ${message}` };
+  }
+}
+
 async function runList(options: RunMcpCommandOptions, io: McpCommandIO): Promise<number> {
   const config = await loadPersistedConfig(options.configSource);
   const servers = config.mcpServers ?? {};
@@ -225,17 +325,14 @@ async function runList(options: RunMcpCommandOptions, io: McpCommandIO): Promise
   }
   for (const [name, server] of entries) {
     const status = server.disabled === true ? "disabled" : "enabled";
-    const args = server.args?.join(" ") ?? "";
     const autoApprove = server.autoApprove === true ? ", autoApprove" : "";
-    io.stdout(
-      `${name}\t${status}${autoApprove}\t${server.command}${args === "" ? "" : ` ${args}`}\n`,
-    );
+    io.stdout(`${name}\t${status}${autoApprove}\t${formatServerSummary(server)}\n`);
   }
   return 0;
 }
 
 async function runAdd(
-  action: Extract<ParsedMcpAction, { readonly kind: "add" }>,
+  action: Extract<ParsedMcpAction, { readonly kind: "add" | "add-http" }>,
   options: RunMcpCommandOptions,
   io: McpCommandIO,
 ): Promise<number> {
@@ -286,6 +383,12 @@ async function runTools(options: RunMcpCommandOptions, io: McpCommandIO): Promis
   } finally {
     await registry.close();
   }
+}
+
+function formatServerSummary(server: McpServerConfig): string {
+  if (server.type === "http") return `http ${server.url}`;
+  const args = server.args?.join(" ") ?? "";
+  return `${server.command}${args === "" ? "" : ` ${args}`}`;
 }
 
 function defaultIO(): McpCommandIO {

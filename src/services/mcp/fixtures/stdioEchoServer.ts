@@ -10,6 +10,7 @@ interface JsonRpcRequest {
 const decoder = new TextDecoder();
 const reader = Bun.stdin.stream().getReader();
 let buffer = "";
+let toolsVersion = 0;
 
 try {
   while (true) {
@@ -37,35 +38,28 @@ function consumeLines(text: string): string {
 
 function handleLine(line: string): void {
   const parsed = JSON.parse(line) as JsonRpcRequest;
-  if (parsed.method === "notifications/initialized") return;
+  if (parsed.method === "notifications/initialized") {
+    if (process.env["MCP_FIXTURE_LIST_CHANGED"] === "1") {
+      setTimeout(() => {
+        toolsVersion = 1;
+        writeNotification("notifications/tools/list_changed", {});
+      }, 25);
+    }
+    return;
+  }
   if (parsed.id === undefined) return;
 
   if (parsed.method === "initialize") {
     writeResult(parsed.id, {
       protocolVersion: "2025-11-25",
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: process.env["MCP_FIXTURE_LIST_CHANGED"] === "1" } },
       serverInfo: { name: "fixture-echo", version: "1.0.0" },
     });
     return;
   }
 
   if (parsed.method === "tools/list") {
-    writeResult(parsed.id, {
-      tools: [
-        {
-          name: "echo",
-          description: "Echo a message through a fixture MCP server.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              message: { type: "string" },
-            },
-            required: ["message"],
-          },
-          annotations: { readOnlyHint: true },
-        },
-      ],
-    });
+    writeResult(parsed.id, { tools: buildTools() });
     return;
   }
 
@@ -83,8 +77,29 @@ function handleLine(line: string): void {
   writeError(parsed.id, -32601, `Method not found: ${String(parsed.method)}`);
 }
 
+function buildTools(): readonly unknown[] {
+  const baseTool = {
+    name: "echo",
+    description: "Echo a message through a fixture MCP server.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: { type: "string" },
+      },
+      required: ["message"],
+    },
+    annotations: { readOnlyHint: true },
+  };
+  if (toolsVersion === 0) return [baseTool];
+  return [baseTool, { ...baseTool, name: "echo2", description: "Second echo tool." }];
+}
+
 function writeResult(id: number, result: unknown): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+}
+
+function writeNotification(method: string, params: unknown): void {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 }
 
 function writeError(id: number, code: number, message: string): void {
