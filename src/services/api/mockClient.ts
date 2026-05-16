@@ -4,7 +4,7 @@ import type {
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
 
-export type MockScenario = "chat" | "edit-loop" | "todo-loop" | "web-loop";
+export type MockScenario = "chat" | "edit-loop" | "todo-loop" | "web-loop" | "mcp-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -107,7 +107,34 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildWebLoopTurn(body);
   }
 
+  if (scenario === "mcp-loop") {
+    return buildMcpLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildMcpLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  const toolName = process.env["MOCK_MCP_TOOL_NAME"] ?? "MCP__test__echo";
+  if (resultCount === 0) {
+    return {
+      leadingText: "Calling MCP tool...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Calling MCP tool..."),
+        makeToolUseContent("toolu_mcp_01", toolName, {
+          message: "hello from nova-code",
+        }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. MCP tool completed.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. MCP tool completed."),
+  };
 }
 
 function buildWebLoopTurn(body: MockRequestBody): MockTurnPlan {

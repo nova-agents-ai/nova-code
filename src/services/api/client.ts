@@ -51,6 +51,13 @@ export function createAnthropicClient(config: ResolvedConfig): Anthropic {
 }
 
 function parseMockScenario(value: string | undefined): MockScenario {
-  if (value === "edit-loop" || value === "todo-loop" || value === "web-loop") return value;
+  if (
+    value === "edit-loop" ||
+    value === "todo-loop" ||
+    value === "web-loop" ||
+    value === "mcp-loop"
+  ) {
+    return value;
+  }
   return "chat";
 }

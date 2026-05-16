@@ -55,6 +55,7 @@ describe("findCommand", () => {
     expect(findCommand("cost")?.name).toBe("cost");
     expect(findCommand("config")?.name).toBe("config");
     expect(findCommand("init")?.name).toBe("init");
+    expect(findCommand("mcp")?.name).toBe("mcp");
   });
 
   test("找不到时返回 undefined", () => {

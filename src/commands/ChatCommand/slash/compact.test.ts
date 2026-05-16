@@ -27,6 +27,7 @@ const CONFIG: ResolvedConfig = {
   maxTurns: 5,
   webProxy: undefined,
   webProxyDomains: [],
+  mcpServers: {},
 };
 
 function makeIO(): SlashIO & { written: string[] } {

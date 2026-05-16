@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPersistedConfig } from "../../config/config.ts";
+import { loadPersistedConfig, savePersistedConfig } from "../../config/config.ts";
 import { runConfigCommand } from "./ConfigCommand.ts";
 
 interface Capture {
@@ -104,6 +104,38 @@ describe("config command", () => {
       capture.stdout.length = 0;
       await runConfigCommand(["get", "webProxy"], { configSource: { homeDir }, io });
       expect(capture.stdout.join("")).toBe("http://****:****@proxy.example:8080/\n");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("get 全量配置会脱敏 MCP env", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    const capture = createCapture();
+    try {
+      await savePersistedConfig(
+        {
+          mcpServers: {
+            brave: {
+              command: "bunx",
+              args: ["@modelcontextprotocol/server-brave-search"],
+              env: { BRAVE_API_KEY: "secret-token" },
+            },
+          },
+        },
+        { homeDir },
+      );
+      const exitCode = await runConfigCommand(["get"], {
+        configSource: { homeDir },
+        io: {
+          stdout: (text) => capture.stdout.push(text),
+          stderr: (text) => capture.stderr.push(text),
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(capture.stdout.join("")).toContain('"BRAVE_API_KEY": "****"');
+      expect(capture.stdout.join("")).not.toContain("secret-token");
     } finally {
       await cleanup();
     }

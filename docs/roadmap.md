@@ -1,4 +1,4 @@
-# nova-code 路线图 v2.10
+# nova-code 路线图 v2.11
 
 > 渐进对齐 → 改进 → 超越
 >
@@ -235,7 +235,7 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - M7.1 增加 Web proxy routing：`webProxy` / `webProxyDomains` 可配置，`NOVA_WEB_PROXY` / `NOVA_WEB_PROXY_DOMAINS` 可环境覆盖，LLM 可通过 `use_proxy=true` 显式请求代理；代理凭证不会出现在 tool_result 中
 - 详见 `docs/design/M7-web-tools.md`、使用手册 `docs/manual/M7-usage-guide.md`、实现架构 `docs/architecture/M7-architecture.md`
 
-### M8 — MCP 客户端协议
+### M8 — MCP 客户端协议 ✅（已完成）
 
 **Phase 2 的重头戏**。实现 MCP server 接入，让 nova-code 自动获得整个 MCP 生态的工具。
 
@@ -243,7 +243,16 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 
 **风险**：MCP 协议本身在演进，需做好版本兼容
 
-**DoD**：能接入 3 个公开 MCP server（filesystem / git / brave-search）
+**DoD**：能接入 3 个公开 MCP server（filesystem / git / brave-search）✅（提供 stdio 配置模板；本地自动化用 fixture 验证协议链路）
+
+**交付摘要**：
+- 新增 `src/services/mcp/`：`McpStdioClient` 手写最小 JSON-RPC stdio client，支持 `initialize` / `notifications/initialized` / `tools/list` / `tools/call`
+- `mcpServers` 写入 `~/.nova-code/config.json`，支持 `command` / `args` / `env` / `cwd` / `timeoutMs` / `disabled` / `autoApprove`；server name 受限为 `[A-Za-z0-9_-]+`
+- MCP 工具通过 `MCP__<server>__<tool>` 命名空间 bridge 成 nova `Tool`，默认 `requiresApproval=true`，只有 `autoApprove=true` 才免审批
+- 新增 `nova-code mcp list|add|remove|tools`；`config get` 全量输出会脱敏 MCP env
+- ask/chat 启动时动态加载 MCP tools，与 `builtinTools` 合并后进入 QueryEngine；单 server 失败只 warning，不阻断内置工具
+- mock transport 新增 `NOVA_MOCK_SCENARIO=mcp-loop`，新增 stdio echo fixture 与 M8 e2e
+- 详见 `docs/design/M8-mcp-client.md`、使用手册 `docs/manual/M8-usage-guide.md`、实现架构 `docs/architecture/M8-architecture.md`
 
 ### M9 — Skills 系统
 
@@ -492,6 +501,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.11**（2026-05-15）：M8 MCP 客户端协议落地。新增 `services/mcp` 最小 stdio JSON-RPC client 与 MCP Tool bridge；`PersistedConfig` 新增 `mcpServers`，`nova-code mcp list|add|remove|tools` 管理 server 配置；ask/chat 启动时将 `builtinTools + MCP__server__tool` 动态工具传入 QueryEngine；MCP 工具默认走 M3 权限审批，可信 server 可设 `autoApprove=true`；新增 echo fixture、MCP 单测与 `m8-e2e-mcp`；新增 M8 设计文档 / 使用手册 / 架构快照；全量 673 tests 通过。
 - **v2.10**（2026-05-15）：M7.1 Web proxy routing 落地。`PersistedConfig` / `config get|set` 新增 `webProxy` 与 `webProxyDomains`；WebFetch / WebSearch 输入新增 `use_proxy`，允许模型在判断目标站点需要代理时请求使用用户配置的 HTTP(S) proxy；`webProxyConfig.ts` 合并配置文件与环境变量，按域名后缀或 LLM request 决定是否传 Bun `fetch` 的 `proxy` 选项；新增代理路由单测与真实本地 proxy fetch 测试；全量 663 tests 通过。
 - **v2.9**（2026-05-14）：M7 Web 工具组落地。新增 `WebFetch` / `WebSearch` 两个内置只读工具，工具注册表扩展到 10 个；`fetchWebContent()` 集中处理 HTTP(S) 校验、private/local host guard、timeout、content-type 与截断；WebFetch 支持轻量 HTML 正文抽取，WebSearch 支持 HTML endpoint、DuckDuckGo `uddg` 解析与域名 allow/block；mock transport 新增 `web-loop` 场景并补本地 HTTP fixture e2e；新增 M7 设计文档 / 使用手册 / 架构快照；全量 653 tests 通过。
 - **v2.8**（2026-05-14）：M6.5 Phase 1 稳定化窗口落地。`generateSessionId` 改用 UUID v4 并保留历史 timestamp 会话加载兼容；补齐 M3 权限主路径子进程 e2e，形成 M1-M6 e2e 覆盖矩阵；新增 `perf:baseline` 脚本和 `docs/performance/M6.5-baseline.md`，记录启动与单工具调用延迟；更新 M2 使用手册 sessionId 示例；新增 M6.5 设计文档 / 使用手册 / 架构快照。

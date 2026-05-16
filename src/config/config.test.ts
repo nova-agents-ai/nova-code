@@ -89,6 +89,13 @@ describe("config - loadPersistedConfig", () => {
           maxTokens: 4096,
           webProxy: "http://proxy.example:8080",
           webProxyDomains: ["example.com", "*.blocked.test"],
+          mcpServers: {
+            filesystem: {
+              command: "bunx",
+              args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
+              autoApprove: false,
+            },
+          },
         },
         { homeDir },
       );
@@ -99,6 +106,13 @@ describe("config - loadPersistedConfig", () => {
         maxTokens: 4096,
         webProxy: "http://proxy.example:8080",
         webProxyDomains: ["example.com", "*.blocked.test"],
+        mcpServers: {
+          filesystem: {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
+            autoApprove: false,
+          },
+        },
       });
     } finally {
       await cleanup();
@@ -143,6 +157,26 @@ describe("config - loadPersistedConfig", () => {
     }
   });
 
+  test("mcpServers 校验 server name 与 stdio server 字段", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      const path = getConfigFilePath({ homeDir });
+      await Bun.write(path, JSON.stringify({ mcpServers: { "bad.name": { command: "bun" } } }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/must match/);
+
+      await Bun.write(path, JSON.stringify({ mcpServers: { ok: { args: ["missing-command"] } } }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/command/);
+
+      await Bun.write(
+        path,
+        JSON.stringify({ mcpServers: { ok: { command: "bun", timeoutMs: 0 } } }),
+      );
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/timeoutMs/);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("顶层不是对象时抛 ConfigError", async () => {
     const { homeDir, cleanup } = await makeTempHome();
     try {
@@ -181,6 +215,7 @@ describe("config - resolveConfig", () => {
     expect(result.model).toBe("from-env-model");
     expect(result.webProxy).toBe("https://env-proxy.example:8443");
     expect(result.webProxyDomains).toEqual(["env.example", "*.blocked.test"]);
+    expect(result.mcpServers).toEqual({});
   });
 
   test("配置文件值生效（无对应 env）", () => {
@@ -192,6 +227,7 @@ describe("config - resolveConfig", () => {
         maxTurns: 5,
         webProxy: "http://web-proxy.example:8080",
         webProxyDomains: ["example.com"],
+        mcpServers: { git: { command: "uvx", args: ["mcp-server-git"] } },
       },
       { env: {} },
     );
@@ -201,6 +237,7 @@ describe("config - resolveConfig", () => {
     expect(result.maxTurns).toBe(5);
     expect(result.webProxy).toBe("http://web-proxy.example:8080");
     expect(result.webProxyDomains).toEqual(["example.com"]);
+    expect(result.mcpServers).toEqual({ git: { command: "uvx", args: ["mcp-server-git"] } });
   });
 
   test("缺省值在 persisted 与 env 都没设时生效", () => {
@@ -211,6 +248,7 @@ describe("config - resolveConfig", () => {
     expect(result.baseURL).toBeUndefined();
     expect(result.webProxy).toBeUndefined();
     expect(result.webProxyDomains).toEqual([]);
+    expect(result.mcpServers).toEqual({});
   });
 });
 
@@ -225,6 +263,7 @@ describe("config - savePersistedConfig", () => {
         maxTurns: 10,
         webProxy: "https://proxy.example:8443",
         webProxyDomains: ["example.com"],
+        mcpServers: { git: { command: "uvx", args: ["mcp-server-git"], autoApprove: true } },
       };
       await savePersistedConfig(config, { homeDir });
       const reloaded = await loadPersistedConfig({ homeDir });
