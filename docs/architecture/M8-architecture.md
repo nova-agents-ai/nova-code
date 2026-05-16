@@ -1,6 +1,6 @@
 # nova-code 架构文档 · M8
 
-> 适用版本：M8 完成之后（MCP stdio tools 上线）
+> 适用版本：M8 完成之后（MCP stdio tools 上线；M8.1 HTTP/refresh 见独立快照）
 > 基线日期：2026-05-15
 > 文档目标：说明 MCP client 子系统、配置模型、工具桥接、命令入口和测试 fixture。
 
@@ -55,7 +55,7 @@ sequenceDiagram
   REG-->>CMD: Tool[] + warnings + close()
 ```
 
-M8 选择在 ask/chat 启动时一次性发现工具。chat 会话期间不动态刷新工具列表；如果用户修改 MCP 配置，需要重启 chat。
+M8 首版选择在 ask/chat 启动时一次性发现工具。M8.1 已在独立架构快照中补充 `tools/list_changed` 动态刷新与 chat 下一轮读取最新工具列表。
 
 ---
 
@@ -160,8 +160,8 @@ chat：
 M8 不做：
 
 - MCP resources/prompts；
-- Streamable HTTP / SSE；
-- server notification 驱动的动态刷新；
+- ✅ M8.1 已补充 Streamable HTTP / SSE；
+- ✅ M8.1 已补充 server notification 驱动的动态刷新；
 - MCP server instructions 注入 system prompt；
 - 对 MCP annotations 自动建立信任。
 
@@ -173,4 +173,5 @@ M8 不做：
 
 - [M8 设计文档](../design/M8-mcp-client.md)
 - [M8 使用手册](../manual/M8-usage-guide.md)
+- [M8.1 架构文档](./M8.1-architecture.md)
 - [Roadmap](../roadmap.md)

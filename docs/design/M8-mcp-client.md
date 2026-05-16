@@ -23,7 +23,7 @@ flowchart LR
   CALL --> RESULT["tool_result"]
 ```
 
-M8 只实现 **stdio transport + Tools capability**。Resources / Prompts / Sampling / Streamable HTTP 不在本阶段范围内。
+M8 首版只实现 **stdio transport + Tools capability**。M8.1 已补充 Streamable HTTP transport 与 `tools/list_changed` 刷新；Resources / Prompts / Sampling 仍不在本阶段范围内。
 
 参考基线：
 
@@ -55,7 +55,7 @@ mcpServers?: {
 设计取舍：
 
 - `name` 限定为 `[A-Za-z0-9_-]+`，避免动态工具名不可控；
-- `type` 当前只允许 `stdio`，为后续 Streamable HTTP 留字段；
+- `type` 在 M8 首版只允许 `stdio`；M8.1 起支持 `type: "http"` 的 Streamable HTTP server；
 - `env` 支持 `$VAR` / `${VAR}` 运行时展开，便于 `BRAVE_API_KEY=${BRAVE_API_KEY}` 这类配置；
 - `autoApprove` 是用户显式信任开关，默认 `false`。
 
@@ -141,8 +141,8 @@ M8 本地 DoD 验证使用仓库内 `stdioEchoServer.ts` fixture，避免 CI 依
 
 ## 8. 后续预留
 
-- M8.x：支持 Streamable HTTP transport；
-- M8.x：读取 `tools/list_changed` notification 并刷新工具列表；
+- ✅ M8.1：支持 Streamable HTTP transport；
+- ✅ M8.1：读取 `tools/list_changed` notification 并刷新工具列表；
 - M9：Skills 可根据 MCP server/tool 描述自动激活领域提示；
 - M10：Hooks 可拦截 MCP tool call 前后；
 - M12：多 provider 下统一处理 MCP tool schema 兼容差异。
@@ -153,4 +153,5 @@ M8 本地 DoD 验证使用仓库内 `stdioEchoServer.ts` fixture，避免 CI 依
 
 - [M8 使用手册](../manual/M8-usage-guide.md)
 - [M8 架构文档](../architecture/M8-architecture.md)
+- [M8.1 设计文档](./M8.1-mcp-http-refresh.md)
 - [Roadmap](../roadmap.md)

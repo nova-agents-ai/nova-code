@@ -18,7 +18,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError } from "../errors/index.ts";
-import type { McpServersConfig, McpStdioServerConfig } from "../services/mcp/types.ts";
+import type {
+  McpServerConfig,
+  McpServersConfig,
+  McpStdioServerConfig,
+  McpStreamableHttpServerConfig,
+} from "../services/mcp/types.ts";
 
 /** 默认使用的模型。Anthropic 当前主推 claude-sonnet-4-5，可被配置覆盖。 */
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
@@ -65,7 +70,7 @@ export interface PersistedConfig {
   readonly webProxy?: string;
   /** M7.1: host suffixes that should use webProxy, e.g. ["example.com", "*.blocked.test"]. */
   readonly webProxyDomains?: readonly string[];
-  /** M8: configured MCP stdio servers, keyed by stable server name. */
+  /** M8: configured MCP servers, keyed by stable server name. */
   readonly mcpServers?: McpServersConfig;
 }
 
@@ -318,7 +323,7 @@ function validateMcpServersConfig(value: unknown, path: string): McpServersConfi
     );
   }
 
-  const servers: Record<string, McpStdioServerConfig> = {};
+  const servers: Record<string, McpServerConfig> = {};
   for (const [name, rawServer] of Object.entries(value as Record<string, unknown>)) {
     validateMcpServerName(name, `Config at ${path}: mcpServers`);
     servers[name] = validateMcpServerConfig(rawServer, `Config at ${path}: mcpServers.${name}`);
@@ -326,41 +331,75 @@ function validateMcpServersConfig(value: unknown, path: string): McpServersConfi
   return servers;
 }
 
-function validateMcpServerConfig(value: unknown, field: string): McpStdioServerConfig {
+function validateMcpServerConfig(value: unknown, field: string): McpServerConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(`${field} must be an object, got ${typeName(value)}.`);
   }
-  const obj = value as Partial<Record<keyof McpStdioServerConfig, unknown>>;
+  const obj = value as Readonly<Record<string, unknown>>;
+  const rawType = obj["type"];
+  if (rawType === undefined || rawType === "stdio") {
+    return validateMcpStdioServerConfig(obj, field);
+  }
+  if (rawType === "http") return validateMcpHttpServerConfig(obj, field);
+  throw new ConfigError(`${field}.type must be "stdio" or "http", got ${String(rawType)}.`);
+}
+
+function validateMcpStdioServerConfig(
+  obj: Readonly<Record<string, unknown>>,
+  field: string,
+): McpStdioServerConfig {
   const result: { -readonly [K in keyof McpStdioServerConfig]: McpStdioServerConfig[K] } = {
-    command: validateNonEmptyString(obj.command, `${field}.command`),
+    command: validateNonEmptyString(obj["command"], `${field}.command`),
   };
 
-  if (obj.type !== undefined) {
-    if (obj.type !== "stdio") {
-      throw new ConfigError(`${field}.type must be "stdio", got ${String(obj.type)}.`);
-    }
-    result.type = "stdio";
+  if (obj["type"] !== undefined) result.type = "stdio";
+  if (obj["args"] !== undefined) result.args = validateStringArray(obj["args"], `${field}.args`);
+  if (obj["env"] !== undefined) result.env = validateStringRecord(obj["env"], `${field}.env`);
+  if (obj["cwd"] !== undefined) result.cwd = validateNonEmptyString(obj["cwd"], `${field}.cwd`);
+  applyMcpCommonServerConfig(result, obj, field);
+  return result;
+}
+
+function validateMcpHttpServerConfig(
+  obj: Readonly<Record<string, unknown>>,
+  field: string,
+): McpStreamableHttpServerConfig {
+  const url = validateNonEmptyString(obj["url"], `${field}.url`);
+  assertHttpUrl(url, `${field}.url`);
+  const result: {
+    -readonly [K in keyof McpStreamableHttpServerConfig]: McpStreamableHttpServerConfig[K];
+  } = {
+    type: "http",
+    url,
+  };
+  if (obj["headers"] !== undefined) {
+    result.headers = validateStringRecord(obj["headers"], `${field}.headers`);
   }
-  if (obj.args !== undefined) result.args = validateStringArray(obj.args, `${field}.args`);
-  if (obj.env !== undefined) result.env = validateStringRecord(obj.env, `${field}.env`);
-  if (obj.cwd !== undefined) result.cwd = validateNonEmptyString(obj.cwd, `${field}.cwd`);
-  if (obj.disabled !== undefined)
-    result.disabled = validateBoolean(obj.disabled, `${field}.disabled`);
-  if (obj.autoApprove !== undefined) {
-    result.autoApprove = validateBoolean(obj.autoApprove, `${field}.autoApprove`);
+  applyMcpCommonServerConfig(result, obj, field);
+  return result;
+}
+
+function applyMcpCommonServerConfig(
+  result: { disabled?: boolean; autoApprove?: boolean; timeoutMs?: number },
+  obj: Readonly<Record<string, unknown>>,
+  field: string,
+): void {
+  if (obj["disabled"] !== undefined) {
+    result.disabled = validateBoolean(obj["disabled"], `${field}.disabled`);
   }
-  if (obj.timeoutMs !== undefined) {
+  if (obj["autoApprove"] !== undefined) {
+    result.autoApprove = validateBoolean(obj["autoApprove"], `${field}.autoApprove`);
+  }
+  if (obj["timeoutMs"] !== undefined) {
     if (
-      typeof obj.timeoutMs !== "number" ||
-      !Number.isInteger(obj.timeoutMs) ||
-      obj.timeoutMs <= 0
+      typeof obj["timeoutMs"] !== "number" ||
+      !Number.isInteger(obj["timeoutMs"]) ||
+      obj["timeoutMs"] <= 0
     ) {
       throw new ConfigError(`${field}.timeoutMs must be a positive integer.`);
     }
-    result.timeoutMs = obj.timeoutMs;
+    result.timeoutMs = obj["timeoutMs"];
   }
-
-  return result;
 }
 
 export function validateMcpServerName(value: string, field = "mcp server name"): void {
@@ -408,6 +447,18 @@ function parseEnvList(value: string | undefined): readonly string[] {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item !== "");
+}
+
+function assertHttpUrl(value: string, field: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new ConfigError(`${field} must be a valid URL: ${describeError(error)}.`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigError(`${field} must use http or https, got ${url.protocol}.`);
+  }
 }
 
 function assertHttpProxyUrl(value: string, path: string): void {

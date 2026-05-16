@@ -54,10 +54,13 @@ describe("mcp command", () => {
     expect(added).toBe(0);
 
     const saved = await loadPersistedConfig({ homeDir: home });
-    expect(saved.mcpServers?.["fixture"]?.command).toBe("bun");
-    expect(saved.mcpServers?.["fixture"]?.args).toEqual(["run", FIXTURE_SERVER_PATH]);
-    expect(saved.mcpServers?.["fixture"]?.autoApprove).toBe(true);
-    expect(saved.mcpServers?.["fixture"]?.env?.["TOKEN"]).toBe("secret");
+    const fixtureConfig = saved.mcpServers?.["fixture"];
+    expect(fixtureConfig?.type).toBe("stdio");
+    if (fixtureConfig?.type === "http") throw new Error("expected stdio config");
+    expect(fixtureConfig?.command).toBe("bun");
+    expect(fixtureConfig?.args).toEqual(["run", FIXTURE_SERVER_PATH]);
+    expect(fixtureConfig?.autoApprove).toBe(true);
+    expect(fixtureConfig?.env?.["TOKEN"]).toBe("secret");
 
     const listed = await runMcpCommand(["list"], options);
     expect(listed).toBe(0);
@@ -67,6 +70,47 @@ describe("mcp command", () => {
     expect(removed).toBe(0);
     const afterRemove = await loadPersistedConfig({ homeDir: home });
     expect(afterRemove.mcpServers?.["fixture"]).toBeUndefined();
+  });
+
+  test("add-http/list manages Streamable HTTP MCP config", async () => {
+    const io = makeIO();
+    const options = {
+      configSource: { homeDir: home },
+      io: {
+        stdout: (text: string) => io.stdout.push(text),
+        stderr: (text: string) => io.stderr.push(text),
+      },
+    };
+
+    const added = await runMcpCommand(
+      [
+        "add-http",
+        "remote",
+        "--auto-approve",
+        "--timeout-ms",
+        "7000",
+        "--header",
+        `Authorization=Bearer \${MCP_TOKEN}`,
+        "https://mcp.example/mcp",
+      ],
+      options,
+    );
+
+    expect(added).toBe(0);
+    const saved = await loadPersistedConfig({ homeDir: home });
+    expect(saved.mcpServers?.["remote"]).toEqual({
+      type: "http",
+      url: "https://mcp.example/mcp",
+      headers: { Authorization: `Bearer \${MCP_TOKEN}` },
+      timeoutMs: 7000,
+      autoApprove: true,
+    });
+
+    const listed = await runMcpCommand(["list"], options);
+    expect(listed).toBe(0);
+    expect(io.stdout.join("")).toContain(
+      "remote\tenabled, autoApprove\thttp https://mcp.example/mcp",
+    );
   });
 
   test("tools connects configured servers and prints exposed tool names", async () => {

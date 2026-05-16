@@ -1,4 +1,5 @@
-export { McpProtocolError, McpStdioClient } from "./McpStdioClient.ts";
+export { McpStdioClient } from "./McpStdioClient.ts";
+export { McpStreamableHttpClient } from "./McpStreamableHttpClient.ts";
 export type { McpToolRegistry } from "./mcpToolRegistry.ts";
 export {
   buildMcpToolName,
@@ -6,14 +7,19 @@ export {
   createMcpToolRegistryFromServers,
   formatMcpCallToolResult,
 } from "./mcpToolRegistry.ts";
+export { McpProtocolError } from "./protocol.ts";
 export type {
   JsonObject,
   JsonValue,
   McpCallToolResult,
+  McpClient,
   McpDiscoveredServer,
   McpInitializeResult,
   McpListToolsResult,
+  McpNotificationListener,
+  McpServerConfig,
   McpServersConfig,
   McpStdioServerConfig,
+  McpStreamableHttpServerConfig,
   McpToolDefinition,
 } from "./types.ts";

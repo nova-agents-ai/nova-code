@@ -95,6 +95,12 @@ describe("config - loadPersistedConfig", () => {
               args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
               autoApprove: false,
             },
+            remote: {
+              type: "http",
+              url: "https://mcp.example/mcp",
+              headers: { Authorization: `Bearer \${MCP_TOKEN}` },
+              timeoutMs: 5000,
+            },
           },
         },
         { homeDir },
@@ -111,6 +117,12 @@ describe("config - loadPersistedConfig", () => {
             command: "bunx",
             args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
             autoApprove: false,
+          },
+          remote: {
+            type: "http",
+            url: "https://mcp.example/mcp",
+            headers: { Authorization: `Bearer \${MCP_TOKEN}` },
+            timeoutMs: 5000,
           },
         },
       });
@@ -172,6 +184,15 @@ describe("config - loadPersistedConfig", () => {
         JSON.stringify({ mcpServers: { ok: { command: "bun", timeoutMs: 0 } } }),
       );
       await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/timeoutMs/);
+
+      await Bun.write(path, JSON.stringify({ mcpServers: { remote: { type: "http" } } }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/url/);
+
+      await Bun.write(
+        path,
+        JSON.stringify({ mcpServers: { remote: { type: "http", url: "ftp://example/mcp" } } }),
+      );
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/http or https/);
     } finally {
       await cleanup();
     }

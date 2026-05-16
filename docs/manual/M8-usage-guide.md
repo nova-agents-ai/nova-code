@@ -21,6 +21,7 @@
 ```bash
 bun run bin/nova-code.ts mcp list
 bun run bin/nova-code.ts mcp add <name> [options] -- <command> [args...]
+bun run bin/nova-code.ts mcp add-http <name> [options] <url>   # M8.1+
 bun run bin/nova-code.ts mcp remove <name>
 bun run bin/nova-code.ts mcp tools
 ```
@@ -199,4 +200,5 @@ bun test src/services/mcp/McpStdioClient.test.ts \
 
 - [M8 设计文档](../design/M8-mcp-client.md)
 - [M8 架构文档](../architecture/M8-architecture.md)
+- [M8.1 使用手册](./M8.1-usage-guide.md)
 - [Roadmap](../roadmap.md)

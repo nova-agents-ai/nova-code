@@ -43,6 +43,8 @@ export interface RunChatReplParams {
   readonly session: ChatSession;
   readonly config: ResolvedConfig;
   readonly tools: readonly Tool[];
+  /** Optional dynamic tool source, used by MCP list_changed refreshes between turns. */
+  readonly getTools?: () => readonly Tool[];
   readonly debugSink: DebugSink;
   /**
    * 可选：记录原始 LLM 请求/响应的独立 sink（chat-llm-*.log）。
@@ -101,6 +103,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     session,
     config,
     tools,
+    getTools,
     debugSink,
     llmLogSink,
     configSource,
@@ -114,6 +117,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
   // M4: 单 chat 会话共用一份 tracking（若调用方注入则用注入的）
   const autoCompactTracking: AutoCompactTrackingState =
     params.autoCompactTracking ?? createAutoCompactTrackingState();
+  const readCurrentTools = (): readonly Tool[] => getTools?.() ?? tools;
 
   // ────────────── I/O wiring ──────────────
   const io: ReplIO = params.io ?? defaultReplIO();
@@ -247,6 +251,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
       const slashAbort = new AbortController();
       phaseRef.current = { kind: "streaming", abort: slashAbort };
+      const currentTools = readCurrentTools();
       const dispatch = await dispatchSlash(input, {
         session,
         io: slashIO,
@@ -256,9 +261,9 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         chatRuntime: {
           config,
           signal: slashAbort.signal,
-          tools,
+          tools: currentTools,
           systemPrompt: buildSystemPrompt({
-            toolNames: tools.map((tool) => tool.name),
+            toolNames: currentTools.map((tool) => tool.name),
             ...(projectInstructions !== undefined ? { projectInstructions } : {}),
           }),
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
@@ -283,7 +288,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       try {
         const gen = session.sendTurn(input, {
           config,
-          tools,
+          tools: readCurrentTools(),
           signal: abortController.signal,
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
           permissionMode: modeState.current,

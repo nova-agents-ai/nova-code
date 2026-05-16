@@ -40,6 +40,29 @@ describe("mcpToolRegistry", () => {
     expect(result).toContain("Structured content");
   });
 
+  test("refreshes bridged tools after tools/list_changed notification", async () => {
+    registry = await createMcpToolRegistryFromServers({
+      fixture: {
+        command: "bun",
+        args: ["run", FIXTURE_SERVER_PATH],
+        env: { MCP_FIXTURE_LIST_CHANGED: "1" },
+        autoApprove: true,
+      },
+    });
+
+    expect(registry.tools.map((tool) => tool.name)).toEqual(["MCP__fixture__echo"]);
+
+    await waitFor(
+      () => registry?.tools.some((tool) => tool.name === "MCP__fixture__echo2") === true,
+    );
+    await registry.waitForPendingRefreshes();
+
+    expect(registry.tools.map((tool) => tool.name)).toEqual([
+      "MCP__fixture__echo",
+      "MCP__fixture__echo2",
+    ]);
+  });
+
   test("startup errors become warnings and do not prevent builtin tools from loading", async () => {
     registry = await createMcpToolRegistryFromServers({
       missing: { command: "definitely-not-a-real-mcp-command" },
@@ -49,3 +72,16 @@ describe("mcpToolRegistry", () => {
     expect(registry.warnings[0]).toContain("MCP server 'missing' unavailable");
   });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await sleep(10);
+  }
+  throw new Error("condition not met before timeout");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

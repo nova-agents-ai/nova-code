@@ -252,7 +252,9 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 新增 `nova-code mcp list|add|remove|tools`；`config get` 全量输出会脱敏 MCP env
 - ask/chat 启动时动态加载 MCP tools，与 `builtinTools` 合并后进入 QueryEngine；单 server 失败只 warning，不阻断内置工具
 - mock transport 新增 `NOVA_MOCK_SCENARIO=mcp-loop`，新增 stdio echo fixture 与 M8 e2e
-- 详见 `docs/design/M8-mcp-client.md`、使用手册 `docs/manual/M8-usage-guide.md`、实现架构 `docs/architecture/M8-architecture.md`
+- M8.1 新增 Streamable HTTP transport：`type: "http"` / `url` / `headers` 配置，`nova-code mcp add-http` 管理 HTTP MCP server
+- M8.1 新增 `notifications/tools/list_changed` 读取与 registry 刷新；chat 下一轮会读取最新 MCP 工具列表
+- 详见 `docs/design/M8-mcp-client.md`、使用手册 `docs/manual/M8-usage-guide.md`、实现架构 `docs/architecture/M8-architecture.md`；M8.1 详见 `docs/design/M8.1-mcp-http-refresh.md`、`docs/manual/M8.1-usage-guide.md`、`docs/architecture/M8.1-architecture.md`
 
 ### M9 — Skills 系统
 
@@ -501,6 +503,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.12**（2026-05-16）：M8.1 MCP HTTP/refresh 落地。新增 `McpStreamableHttpClient`，支持 Streamable HTTP `POST` JSON response / `POST` SSE response / 初始化后 `GET` SSE notification；`mcpServers` 支持 `type: "http"`、`url`、`headers` 且 `config get` 对 headers 脱敏；新增 `nova-code mcp add-http`；stdio 与 HTTP client 均可分发 `notifications/tools/list_changed`，registry 会重新 `tools/list` 并刷新 `MCP__server__tool` bridge，chat 下一轮读取最新工具；新增 M8.1 设计文档 / 使用手册 / 架构快照；全量 678 tests 通过。
 - **v2.11**（2026-05-15）：M8 MCP 客户端协议落地。新增 `services/mcp` 最小 stdio JSON-RPC client 与 MCP Tool bridge；`PersistedConfig` 新增 `mcpServers`，`nova-code mcp list|add|remove|tools` 管理 server 配置；ask/chat 启动时将 `builtinTools + MCP__server__tool` 动态工具传入 QueryEngine；MCP 工具默认走 M3 权限审批，可信 server 可设 `autoApprove=true`；新增 echo fixture、MCP 单测与 `m8-e2e-mcp`；新增 M8 设计文档 / 使用手册 / 架构快照；全量 673 tests 通过。
 - **v2.10**（2026-05-15）：M7.1 Web proxy routing 落地。`PersistedConfig` / `config get|set` 新增 `webProxy` 与 `webProxyDomains`；WebFetch / WebSearch 输入新增 `use_proxy`，允许模型在判断目标站点需要代理时请求使用用户配置的 HTTP(S) proxy；`webProxyConfig.ts` 合并配置文件与环境变量，按域名后缀或 LLM request 决定是否传 Bun `fetch` 的 `proxy` 选项；新增代理路由单测与真实本地 proxy fetch 测试；全量 663 tests 通过。
 - **v2.9**（2026-05-14）：M7 Web 工具组落地。新增 `WebFetch` / `WebSearch` 两个内置只读工具，工具注册表扩展到 10 个；`fetchWebContent()` 集中处理 HTTP(S) 校验、private/local host guard、timeout、content-type 与截断；WebFetch 支持轻量 HTML 正文抽取，WebSearch 支持 HTML endpoint、DuckDuckGo `uddg` 解析与域名 allow/block；mock transport 新增 `web-loop` 场景并补本地 HTTP fixture e2e；新增 M7 设计文档 / 使用手册 / 架构快照；全量 653 tests 通过。

@@ -1,9 +1,12 @@
-/** MCP protocol/domain types used by nova-code's minimal stdio client. */
+/** MCP protocol/domain types used by nova-code's minimal clients. */
 
 import type { ToolInputSchema } from "../../Tool.ts";
 
 /** Latest MCP protocol revision used by M8 handshake. */
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
+
+/** tools/list_changed server notification method. */
+export const MCP_TOOLS_LIST_CHANGED_NOTIFICATION = "notifications/tools/list_changed";
 
 /** Safe JSON value shape for JSON-RPC payloads. */
 export type JsonValue =
@@ -16,19 +19,32 @@ export type JsonValue =
 
 export type JsonObject = Readonly<Record<string, JsonValue>>;
 
-export interface McpStdioServerConfig {
-  readonly type?: "stdio";
-  readonly command: string;
-  readonly args?: readonly string[];
-  readonly env?: Readonly<Record<string, string>>;
-  readonly cwd?: string;
+export interface McpBaseServerConfig {
   readonly disabled?: boolean;
   readonly timeoutMs?: number;
   /** User-managed trust switch. When true, bridged tools bypass normal approval prompts. */
   readonly autoApprove?: boolean;
 }
 
-export type McpServersConfig = Readonly<Record<string, McpStdioServerConfig>>;
+export interface McpStdioServerConfig extends McpBaseServerConfig {
+  readonly type?: "stdio";
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+  readonly cwd?: string;
+}
+
+export interface McpStreamableHttpServerConfig extends McpBaseServerConfig {
+  readonly type: "http";
+  /** Single MCP endpoint supporting Streamable HTTP POST and optional GET SSE. */
+  readonly url: string;
+  /** Static request headers, typically Authorization. Values may reference $ENV or ${ENV}. */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpStreamableHttpServerConfig;
+
+export type McpServersConfig = Readonly<Record<string, McpServerConfig>>;
 
 export interface McpImplementation {
   readonly name: string;
@@ -84,7 +100,24 @@ export interface McpCallToolResult {
 
 export interface McpDiscoveredServer {
   readonly name: string;
+  readonly transport: "stdio" | "http";
   readonly toolCount: number;
   readonly serverInfo?: McpImplementation;
   readonly instructions?: string;
+}
+
+export type McpNotificationListener = (method: string, params: unknown) => void;
+
+export interface McpClient {
+  readonly serverInfo: McpInitializeResult | undefined;
+  readonly diagnosticSnippet: string;
+  connect(signal?: AbortSignal): Promise<McpInitializeResult>;
+  listTools(signal?: AbortSignal): Promise<McpListToolsResult>;
+  callTool(
+    name: string,
+    args: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<McpCallToolResult>;
+  onNotification(listener: McpNotificationListener): () => void;
+  close(): Promise<void>;
 }
