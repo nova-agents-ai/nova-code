@@ -1,4 +1,4 @@
-# nova-code 路线图 v2.13
+# nova-code 路线图 v2.16
 
 > 渐进对齐 → 改进 → 超越
 >
@@ -45,8 +45,8 @@ claude-code 关键模块全景：`tools/`(184 文件) `commands/`(207, 87 子命
 │  Phase 1: CATCH-UP (追赶期)        7 个 milestone → 能用版       │
 │  目标：核心 agent + 主力工具集 + 基础交互，覆盖 80% 日常任务      │
 ├─────────────────────────────────────────────────────────────────┤
-│  Phase 2: PARITY  (平齐期)         8 个 milestone → 对齐版       │
-│  目标：MCP/Skills/Hooks/多 provider/TUI，功能上 ≈ claude-code    │
+│  Phase 2: PARITY  (平齐期)        12 个 milestone → 对齐版       │
+│  目标：MCP/Skills/Hooks/Rules/Plugins/Plan/TUI，功能上 ≈ claude-code │
 ├─────────────────────────────────────────────────────────────────┤
 │  Phase 3: BEYOND  (超越期)          持续        → 领先版          │
 │  目标：修复 claude-code 已知缺陷 + 注入 nova 独有能力             │
@@ -303,7 +303,75 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - mock transport 新增 `NOVA_MOCK_SCENARIO=agent-loop`，新增 QueryEngine 单测与 M11 e2e 子进程验证
 - 详见 `docs/design/M11-agent-tool.md`、使用手册 `docs/manual/M11-usage-guide.md`、实现架构 `docs/architecture/M11-architecture.md`
 
-### M12 — 多 Provider 抽象
+### M12 — `.claude/rules` 逻辑
+
+把 claude-code 的 rules-as-instructions 机制纳入 project instructions：`.claude/rules/**/*.md` 不是权限规则，而是可拆分、可按路径生效的项目指令。
+
+**新增**：递归扫描 `.claude/rules/**/*.md`、frontmatter `paths` 条件激活、HTML comment 剥离、`@include` 复用 M4 语义、instructions loaded hook 事件对齐。
+
+**参照**：`claude-code/src/utils/claudemd.ts` 中 `processMdRules` / `processConditionedMdRules` / `isMemoryFilePath`
+
+**设计要点**：
+
+- 无 `paths` frontmatter 的 rule 随 CLAUDE.md 一起 eager load。
+- 带 `paths` 的 rule 只在相关文件被读取、编辑或通过 @-mention 注入时加载。
+- Project rules 跟随从 repo root 到 cwd 的目录链；越靠近 cwd 的指令优先级越高。
+- 明确区分 `.claude/rules/*.md` 的“模型行为指令”和 M3 `permissions.json` 的“工具权限规则”。
+
+**DoD**：在 `src/**/*.ts` 专属 rule 存在时，模型只有处理匹配文件才看到该 rule；非匹配任务不污染 system prompt。
+
+### M13 — 插件系统
+
+本地插件包与插件管理命令，让插件可以声明 skills、commands、hooks、MCP servers、rules 与配置项。
+
+**参照**：`claude-code/src/plugins/`、`claude-code/src/utils/plugins/`、`commands/plugin/`
+
+**新增**：
+
+- `.nova-code/plugins/` 与 `~/.nova-code/plugins/` 插件发现。
+- 插件 manifest、启用/禁用、reload、信任确认、版本信息。
+- 插件贡献项：skills / custom slash commands / hooks / MCP server templates / `.claude/rules` 风格 instruction fragments。
+- `nova-code plugin list|enable|disable|reload|validate`。
+
+**机会**：M9 Skills、M10 Hooks、M12 Rules 与 M8 MCP 已具备基础，插件系统应做成“扩展打包层”，不要重新发明各子系统。
+
+**DoD**：一个本地插件安装后，可以同时贡献一个 skill、一个 slash command、一个 hook 和一段 path-scoped rule，并能被禁用后完全消失。
+
+### M14 — Prompt 附件与 @-mention 上下文注入
+
+把用户输入从纯文本升级为“prompt + attachments”：支持用户显式引用文件、目录、MCP resource、图片/粘贴内容，并把这些上下文作为结构化附件注入模型。
+
+**参照**：`claude-code/src/utils/attachments.ts`、`processUserInput/`、`components/PromptInput/`
+
+**新增**：
+
+- `@file` / `@dir` / `@glob` / `@MCP__server__resource` 解析与去重。
+- 文件附件读取、目录摘要、MCP resource 读取桥接、过大内容截断。
+- 与 M12 `paths` rules 联动：附件命中文件路径时激活对应 `.claude/rules`。
+- paste text / image 的最小附件模型；富媒体渲染留给 M17 TUI。
+- headless / REPL 两条路径共享同一个 attachment resolver。
+
+**DoD**：用户输入 `请重构 @src/cli.ts 并遵守相关规则` 时，模型能看到文件内容、匹配的 path-scoped rules、去重后的附件摘要，而不是只看到字面量 `@src/cli.ts`。
+
+### M15 — Plan Mode 作为一等运行模式
+
+把当前仅作为权限模式占位的 `plan` 提升为完整交互状态：先计划、再审批、再执行。
+
+**参照**：`claude-code/src/tools/{EnterPlanModeTool,ExitPlanModeTool}/`、`commands/plan/`、plan mode 相关 permission flow
+
+**新增**：
+
+- `EnterPlanMode` / `ExitPlanMode` 工具与 `/plan` slash command。
+- chat runtime 中的 plan state machine：planning → awaiting approval → executing / rejected。
+- plan 模式下默认禁止写权工具，只有用户批准 plan 后才切回可执行状态。
+- plan summary 进入会话历史，并在执行阶段作为强约束上下文。
+- 与 M11 子 agent 协作：explore/plan 子 agent 可产出 plan，但不能直接改文件。
+
+**边界**：本 milestone 做 claude-code parity 的 Plan Mode；Phase 3 的 Plan-Execute-Verify 多阶段自治 loop 仍是更高阶能力，不在此处展开。
+
+**DoD**：用户开启 `/plan` 后，模型只能产出计划并请求批准；批准前任何 Bash/FileWrite/FileEdit 都被拦截。
+
+### M16 — 多 Provider 抽象
 
 OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
@@ -311,7 +379,7 @@ OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
 **机会**：claude-code 偏向 Anthropic 生态，nova 做真正中立的多 provider 是天然差异化
 
-### M13 — TUI（React + Ink）
+### M17 — TUI（React + Ink）
 
 到这一期再做 TUI 而不是早期做，原因：
 
@@ -322,13 +390,13 @@ OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
 **减重策略**：claude-code 用了 389 个 React 组件，nova 目标 < 80 个
 
-### M14 — Resume / Save / Share 会话
+### M18 — Resume / Save / Share 会话
 
 `commands/resume`、会话持久化到 `~/.nova-code/sessions/`、生成可分享链接（本地导出 markdown）。
 
 **参照**：`claude-code/src/history.ts` + `commands/{resume,share}/`
 
-### M14.5 — 重构窗口 #3 + Phase 2 收官
+### M18.5 — 重构窗口 #3 + Phase 2 收官
 
 - 全模块审计：单文件 < 600 行硬约束、循环依赖清零
 - 性能回归：与 v0.5.0 baseline 对比，启动时间不退化超 20%
@@ -412,19 +480,31 @@ Phase 3 不预设具体顺序。
                    ═══ v0.5.0 ═══
                          │
                          ▼
-                   Phase 2 (M7-M14)
+                   Phase 2 (M7-M18)
                          │
               ┌──────────┼──────────┐
               ▼          ▼          ▼
-         M7/M8/M9    M10/M12     M13 TUI
-         (独立)      (独立)      (M2 后)
+        M7/M8/M9     M10 Hooks   M11 AgentTool
+        (已完成)     (已完成)    (依赖 M2 + M4)
                          │
                          ▼
-                    M11 AgentTool
-                    (依赖 M2 + M4)
+                  M12 .claude/rules
                          │
                          ▼
-                  M14.5 重构 #3
+                  M13 Plugins
+                         │
+                         ▼
+             M14 Attachments / @-mention
+                         │
+                         ▼
+                    M15 Plan Mode
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+        M16 Providers  M17 TUI   M18 Resume/Share
+                         │
+                         ▼
+                  M18.5 重构 #3
                          │
                          ▼
                    ═══ v1.0.0 ═══
@@ -436,11 +516,14 @@ Phase 3 不预设具体顺序。
 - **硬依赖**：
   - M1 → M3（权限保护的是 M1 的写权工具）
   - M2 → M4（compact 服务于多轮对话）
-  - M2 → M14（resume 服务于 chat 会话）
   - M2 + M4 → M11（AgentTool 需要稳定的多轮 + compact 基础）
+  - M12 → M14（@-mention / prompt 附件命中文件路径时要激活 path-scoped rules）
+  - M3 → M15（Plan Mode 需要权限系统在批准前拦截写权工具）
+  - M2 → M18（resume / share 服务于 chat 会话）
 - **软建议**：
   - M3 / M2 / M5 / M6 在 M1.5 之后可任意顺序、可并行
-  - Phase 2 内 M7 / M8 / M9 / M10 / M12 / M13 大体独立，可按兴趣排序
+  - Phase 2 内 M7 / M8 / M9 / M10 / M11 已完成；M12-M15 是进入 provider/TUI 前的上下文与策略补齐段
+  - M16 多 provider 与 M17 TUI 大体独立，但 M17 应复用 M14 attachment 数据模型与 M15 plan state
 
 ---
 
@@ -499,7 +582,7 @@ Phase 3 不预设具体顺序。
 
 - 每个 milestone 进入前先写设计文档（`docs/design/MX-*.md`）
 - 每个 milestone 必有单测 + e2e + 性能基准
-- 每三个 milestone 一次重构窗口（M1.5 / M6.5 / M14.5 是显式预留）
+- 阶段性重构窗口显式预留（M1.5 / M6.5 / M18.5），必要时可在 Phase 2 中途追加 M15.5
 - Biome + tsc strict + e2e 必须全绿才能合并主分支
 
 ### 7.3 持续记录（决定 Phase 3 方向）
@@ -529,6 +612,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.16**（2026-05-17）：进入 M12 前重排 Phase 2 roadmap：新增 M12 `.claude/rules` 逻辑、M13 插件系统、M14 Prompt 附件与 @-mention 上下文注入、M15 Plan Mode 一等运行模式；原 M12 多 Provider / M13 TUI / M14 Resume-Save-Share / M14.5 重构窗口顺延为 M16 / M17 / M18 / M18.5，并同步更新 Phase 2 总览、依赖图与重构窗口说明。
 - **v2.15**（2026-05-17）：M11 AgentTool 子 agent 派生落地。新增 `src/tools/AgentTool` 与 `SubAgentRuntime` 注入，支持模型通过 `Agent` 工具启动同步 one-shot 子 agent；子 agent 复用父会话配置、权限、hooks 与 cwd，父上下文文本化注入，父 agent 只收到最终摘要；支持 `general-purpose` / `explore` 两个轻量类型并禁止递归 Agent；mock transport 新增 `agent-loop`，新增 M11 设计文档 / 使用手册 / 架构快照。
 - **v2.14**（2026-05-17）：M10 Hooks 系统落地。新增 `src/services/hooks`，支持 `PreToolUse` / `PostToolUse` command hooks；配置写入 `~/.nova-code/config.json` 的 `hooks` 字段，支持 matcher、轻量 `if` 条件、超时、stdin JSON 协议、exit code 2 阻断、stdout JSON `updatedInput` / `updatedOutput`；QueryEngine 在权限系统前执行 PreToolUse、工具执行后执行 PostToolUse；新增 `hook_result` AgentEvent 与 ask/chat 渲染；新增 M10 设计文档 / 使用手册 / 架构快照；全量 706 tests 通过。
 - **v2.13**（2026-05-17）：M9 Skills 系统落地并对齐 claude-code 当前机制。新增 `src/services/skills` 与 `Skill` tool，支持 `~/.agents/skills/<name>/SKILL.md` 直接子目录形态的 frontmatter + body 加载；ask/chat 只注入 skill 名称/描述 listing，完整 body 由模型语义选择后通过 `Skill` tool 加载，或由用户 `/name args` 显式调用时本地展开；`skill` CLI 保留 `list/show`，不再提供本地字符匹配 `match` 子命令；支持 `disable-model-invocation`、`user-invocable`、`NOVA_DISABLE_SKILLS` 与 `NOVA_SKILL_DIRS`；新增 M9 设计文档 / 使用手册 / 架构快照；全量 695 tests 通过。
