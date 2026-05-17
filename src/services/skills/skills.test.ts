@@ -7,6 +7,7 @@ import {
   loadSkillCatalog,
   parseSkillDocument,
   resolveSkillRoots,
+  resolveSkillSlashInvocation,
 } from "./index.ts";
 
 let tempDir: string;
@@ -58,6 +59,7 @@ describe("skill catalog loading", () => {
     expect(catalog.skills).toHaveLength(1);
     expect(catalog.skills[0]?.name).toBe("gstack");
     expect(catalog.skills[0]?.metadata.manualOnly).toBe(true);
+    expect(catalog.skills[0]?.metadata.userInvocable).toBe(true);
   });
 
   test("不递归扫描嵌套子目录下的 SKILL.md", async () => {
@@ -124,6 +126,33 @@ describe("skill prompt", () => {
 
     expect(formatSkillListingInstructions(catalog.skills)).toBeUndefined();
   });
+
+  test("用户 slash 调用会本地展开 disable-model-invocation skill", async () => {
+    const home = join(tempDir, "home");
+    await writeDisabledSkill(home, "debug", "Debug current session internals.");
+    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
+
+    const invocation = resolveSkillSlashInvocation("/debug inspect logs", catalog.skills);
+
+    expect(invocation?.kind).toBe("invoke");
+    if (invocation?.kind !== "invoke") return;
+    expect(invocation.skill.name).toBe("debug");
+    expect(invocation.args).toBe("inspect logs");
+    expect(invocation.prompt).toContain('The user directly invoked the "debug" skill.');
+    expect(invocation.prompt).toContain("Base directory for this skill:");
+    expect(invocation.prompt).toContain("Disabled skill body.");
+  });
+
+  test("user-invocable=false 的 skill 不能被用户 slash 直接调用", async () => {
+    const home = join(tempDir, "home");
+    await writeModelOnlySkill(home, "agent-only", "Model-only skill.");
+    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
+
+    const invocation = resolveSkillSlashInvocation("/agent-only run", catalog.skills);
+
+    expect(invocation?.kind).toBe("blocked");
+    expect(invocation?.skill.name).toBe("agent-only");
+  });
 });
 
 async function writeSkill(home: string, name: string, description: string): Promise<void> {
@@ -153,6 +182,22 @@ disable-model-invocation: true
 ---
 # ${name}
 Disabled skill body.
+`,
+  );
+}
+
+async function writeModelOnlySkill(home: string, name: string, description: string): Promise<void> {
+  const dir = join(home, ".agents", "skills", name);
+  await mkdir(dir, { recursive: true });
+  await Bun.write(
+    join(dir, "SKILL.md"),
+    `---
+name: ${name}
+description: ${description}
+user-invocable: false
+---
+# ${name}
+Model only body.
 `,
   );
 }

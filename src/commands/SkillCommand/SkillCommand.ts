@@ -106,6 +106,8 @@ function formatSkillDetails(skill: LoadedSkill): string {
     `Name: ${skill.name}`,
     `Description: ${skill.description || "(none)"}`,
     `Manual only: ${skill.metadata.manualOnly ? "yes" : "no"}`,
+    `Model invocable: ${skill.metadata.disableModelInvocation ? "no" : "yes"}`,
+    `User invocable: ${skill.metadata.userInvocable ? "yes" : "no"}`,
     `Path: ${skill.path}`,
     "",
     skill.body,

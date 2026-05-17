@@ -14,6 +14,7 @@ src/services/skills/
 ├── frontmatter.ts        SKILL.md frontmatter 子集解析
 ├── skillLoader.ts        root 解析 + 直接子目录 SKILL.md 加载
 ├── skillPrompt.ts        skill listing / Skill tool body 格式化 + mergeInstructionBlocks
+├── skillSlash.ts         用户 `/name args` 显式调用的本地 skill body 展开
 ├── index.ts
 └── skills.test.ts
 
@@ -49,6 +50,7 @@ interface SkillMetadata {
   allowedTools?: readonly string[];
   whenToUse?: string;
   disableModelInvocation: boolean;
+  userInvocable: boolean;
   manualOnly: boolean;
 }
 ```
@@ -125,7 +127,7 @@ flowchart TD
 - compact forked-agent 与主循环使用同一套 system prompt 构造逻辑；
 - 避免为 M9 改动 Anthropic SDK request shape。
 
-关键变化：`projectInstructions` 只包含 model-invocable skill listing，不包含完整 body。`disable-model-invocation: true` 的 skill 会被排除在 listing 与 `Skill` tool 之外；完整 body 只由 `Skill` tool 按名称加载后作为 tool result 返回模型。
+关键变化：`projectInstructions` 只包含 model-invocable skill listing，不包含完整 body。`disable-model-invocation: true` 的 skill 会被排除在 listing 与 `Skill` tool 之外；但只要 `user-invocable` 没设为 `false`，用户仍可通过 `/name args` 直接触发本地展开。完整 body 只在 `Skill` tool 调用或用户 slash skill 调用时加载。
 
 ---
 
@@ -136,7 +138,7 @@ flowchart TD
 - `list`：输出 `name / description / path`；
 - `show <name>`：输出元数据与正文。
 
-M9 不再保留 `match` 子命令，也没有本地 skill matcher；ask/chat 的运行时选择完全依赖模型看 listing 后调用 `Skill` tool。CLI options 在测试中可注入 `cwd/homeDir/env/io`，生产路径默认使用 `process.cwd()` 与当前环境。
+M9 不再保留 `match` 子命令，也没有本地语义 matcher；ask/chat 的普通语义选择依赖模型看 listing 后调用 `Skill` tool。用户 `/name args` 是另一条确定性本地展开路径，不经过 `Skill` tool。CLI options 在测试中可注入 `cwd/homeDir/env/io`，生产路径默认使用 `process.cwd()` 与当前环境。
 
 ---
 
@@ -158,7 +160,8 @@ M9 不让 skill 获得任何执行特权：
 |---|---|---|
 | Parser | `skills.test.ts` | block scalar / arrays / metadata |
 | Loader | `skills.test.ts` | roots / manual-only / env override / 非递归加载 |
-| Prompt | `skills.test.ts` | model-facing listing 不包含 body |
+| Prompt | `skills.test.ts` | model-facing listing 不包含 body；`disable-model-invocation` 过滤 |
+| Slash | `skills.test.ts` | 用户 `/name args` 本地展开；`user-invocable=false` 拒绝 |
 | Tool | `SkillTool.test.ts` | Skill tool 加载完整 body |
 | CLI | `SkillCommand.test.ts` | list/show/错误 action |
 | E2E | `m9-e2e-skills.test.ts` | ask 的 mock log systemSnippet 只含 listing；toolResultText 包含 body |

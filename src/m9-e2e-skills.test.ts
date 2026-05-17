@@ -61,6 +61,19 @@ describe("m9-e2e-skills", () => {
     expect(second?.toolResultText ?? "").toContain("Base directory for this skill:");
     expect(second?.toolResultText ?? "").toContain("M9_JAVA_SKILL_BODY_MARKER");
   }, 20_000);
+
+  test("ask 用户 slash 可直接展开 disable-model-invocation skill", async () => {
+    await writeDisabledDebugSkill(home);
+
+    const result = await runAskChild(home, mockLogFile, "chat", "/debug inspect session");
+
+    expect(result.exitCode, `stdout=${result.stdout}\nstderr=${result.stderr}`).toBe(0);
+    const log = await readMockLogEntries(mockLogFile);
+    const first = log[0];
+    expect(first?.lastUserText ?? "").toContain('The user directly invoked the "debug" skill.');
+    expect(first?.lastUserText ?? "").toContain("M9_DEBUG_DISABLED_BODY_MARKER");
+    expect(first?.systemSnippet ?? "").not.toContain("Debug current session internals.");
+  }, 20_000);
 });
 
 async function writeJavaSkill(homeDir: string): Promise<void> {
@@ -79,13 +92,31 @@ Prefer explicit concurrency, transaction, and error-handling checks.
   );
 }
 
+async function writeDisabledDebugSkill(homeDir: string): Promise<void> {
+  const dir = join(homeDir, ".agents", "skills", "debug");
+  await mkdir(dir, { recursive: true });
+  await Bun.write(
+    join(dir, "SKILL.md"),
+    `---
+name: debug
+description: Debug current session internals.
+disable-model-invocation: true
+---
+# Debug Skill
+M9_DEBUG_DISABLED_BODY_MARKER
+Inspect session debug state.
+`,
+  );
+}
+
 async function runAskChild(
   homeDir: string,
   logFile: string,
   scenario: string,
+  prompt = "review this Java concurrency service",
 ): Promise<RunAskResult> {
   const proc = Bun.spawn({
-    cmd: ["bun", "run", BIN_PATH, "ask", "review this Java concurrency service"],
+    cmd: ["bun", "run", BIN_PATH, "ask", prompt],
     cwd: homeDir,
     env: {
       PATH: process.env["PATH"] ?? "",
