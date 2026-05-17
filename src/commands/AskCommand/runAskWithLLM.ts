@@ -22,6 +22,10 @@ import { createAutoCompactTrackingState } from "../../services/compact/autoCompa
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
+import {
+  getSkillInstructionsForPrompt,
+  mergeInstructionBlocks,
+} from "../../services/skills/index.ts";
 import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "./debugSink.ts";
@@ -84,12 +88,25 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     });
     // M4: 启动时一次性加载 CLAUDE.md（4 层）+ 准备 autoCompact tracking
     const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+    const skillContext = await getSkillInstructionsForPrompt({
+      cwd: process.cwd(),
+      prompt: question,
+    });
+    for (const warning of skillContext.catalog.warnings) {
+      process.stderr.write(`[skill] ${warning}\n`);
+    }
+    const runtimeInstructions = mergeInstructionBlocks(
+      projectInstructions,
+      skillContext.instructions,
+    );
     const autoCompactTracking = createAutoCompactTrackingState();
     logEvent("tengu_started", {
       command: "ask",
       model: config.model,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
       hasProjectInstructions: projectInstructions !== undefined,
+      skillCount: skillContext.activations.length,
+      skillNames: skillContext.activations.map((activation) => activation.skill.name).join(","),
       mcpToolCount: mcpRegistry.tools.length,
     });
     let inAssistantText = false;
@@ -121,7 +138,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       // M4: 默认开启 auto-compact 与 CLAUDE.md 注入
       autoCompactEnabled: true,
       autoCompactTracking,
-      ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+      ...(runtimeInstructions !== undefined ? { projectInstructions: runtimeInstructions } : {}),
     });
 
     for await (const event of generator) {
