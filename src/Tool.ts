@@ -26,10 +26,36 @@ export interface ToolInputSchema {
 /**
  * 传给 Tool.execute 的运行时上下文。
  *
- * M1 范围内仅含 abort signal。后续 milestone 可扩展（cwd、logger、权限校验等）—— 见 §2.3 设计稿约束。
+ * M1 范围内仅含 abort signal。M11 起注入可选 sub-agent runtime，
+ * 让 AgentTool 能在不 import QueryEngine 的前提下派生子 agent。
  */
 export interface ToolExecutionContext {
   readonly signal: AbortSignal;
+  readonly subAgentRuntime?: SubAgentRuntime;
+}
+
+/** AgentTool 请求 QueryEngine 派生子 agent 时的最小参数。 */
+export interface SubAgentRunParams {
+  readonly description: string;
+  readonly prompt: string;
+  readonly subagentType?: string;
+}
+
+/** 子 agent 完成后返回给 AgentTool 的摘要结果。 */
+export interface SubAgentRunResult {
+  readonly agentType: string;
+  readonly turns: number;
+  readonly summary: string;
+}
+
+/**
+ * QueryEngine 注入给工具的子 agent runtime。
+ *
+ * 放在 Tool.ts 而不是 AgentTool.ts 的原因：ToolExecutionContext 是所有工具共享的
+ * 边界类型；AgentTool 只能依赖这个稳定接口，避免形成 QueryEngine ↔ tools 的循环。
+ */
+export interface SubAgentRuntime {
+  readonly run: (params: SubAgentRunParams) => Promise<SubAgentRunResult>;
 }
 
 /**

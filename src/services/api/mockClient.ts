@@ -10,7 +10,8 @@ export type MockScenario =
   | "todo-loop"
   | "web-loop"
   | "mcp-loop"
-  | "skill-loop";
+  | "skill-loop"
+  | "agent-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -80,6 +81,15 @@ function isCompactRequest(body: MockRequestBody): boolean {
   return lastUserText?.includes("Your task is to create a detailed summary") === true;
 }
 
+function isSubAgentRequest(body: MockRequestBody): boolean {
+  const system = extractSystemSnippet(body.system);
+  const lastUserText = extractLastUserText(body.messages);
+  return (
+    system?.includes("sub-agent spawned by a parent coding assistant") === true ||
+    lastUserText?.includes("<subagent_task>") === true
+  );
+}
+
 function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan {
   // M4: compact 请求一律返回 summary（不论 scenario）
   if (isCompactRequest(body)) {
@@ -87,6 +97,14 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
       leadingText: "",
       stopReason: "end_turn",
       content: makeTextContent("<summary>conversation compacted by mock</summary>"),
+    };
+  }
+
+  if (isSubAgentRequest(body)) {
+    return {
+      leadingText: "Sub-agent inspected the delegated task.",
+      stopReason: "end_turn",
+      content: makeTextContent("Sub-agent inspected the delegated task."),
     };
   }
 
@@ -122,7 +140,35 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildSkillLoopTurn(body);
   }
 
+  if (scenario === "agent-loop") {
+    return buildAgentLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildAgentLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  if (resultCount === 0) {
+    return {
+      leadingText: "Delegating to sub-agent...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Delegating to sub-agent..."),
+        makeToolUseContent("toolu_agent_01", "Agent", {
+          description: "Inspect delegated task",
+          prompt: "Inspect the delegated task and return a concise summary.",
+          subagent_type: "explore",
+        }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. Agent completed.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. Agent completed."),
+  };
 }
 
 function buildSkillLoopTurn(body: MockRequestBody): MockTurnPlan {

@@ -27,6 +27,8 @@ import { HookCommandType } from "./services/hooks/types.ts";
 import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
 import { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
+import { AgentTool } from "./tools/AgentTool/AgentTool.ts";
+import { AGENT_TOOL_NAME } from "./tools/AgentTool/constants.ts";
 import { type AgentEvent, AgentStopReasonEnum, MessageRoleEnum } from "./types/message.ts";
 import type { PermissionRule, UserChoice } from "./types/permissions.ts";
 
@@ -51,6 +53,8 @@ interface FakeStreamCall {
   readonly messageCount: number;
   /** 完整的 system prompt，用于断言 M6 TodoWrite guidance 注入。 */
   readonly system?: unknown;
+  /** SDK tools 中暴露的工具名，用于断言子 agent 不允许递归派生。 */
+  readonly toolNames: readonly string[];
   /** 完整的 messages body（按 SDK 期望的 shape），用于断言历史消息前置正确。 */
   readonly messages: readonly unknown[];
 }
@@ -85,6 +89,7 @@ function makeFakeClient(turns: readonly ScriptedTurn[]): FakeClientHandle {
         calls.push({
           model: body.model,
           hasTools: body.tools !== undefined && body.tools.length > 0,
+          toolNames: extractToolNames(body.tools),
           messageCount: body.messages.length,
           system: body.system,
           messages: body.messages,
@@ -95,6 +100,17 @@ function makeFakeClient(turns: readonly ScriptedTurn[]): FakeClientHandle {
   } as unknown as Anthropic;
 
   return { client: fakeClient, calls };
+}
+
+function extractToolNames(tools: readonly unknown[] | undefined): readonly string[] {
+  if (tools === undefined) return [];
+  return tools
+    .map((tool) => {
+      if (tool === null || typeof tool !== "object" || Array.isArray(tool)) return undefined;
+      const record = tool as Readonly<Record<string, unknown>>;
+      return typeof record["name"] === "string" ? record["name"] : undefined;
+    })
+    .filter((name): name is string => name !== undefined);
 }
 
 function makeFakeStream(turn: ScriptedTurn): {
@@ -427,6 +443,54 @@ describe("runAgentLoop - 工具调用循环", () => {
     expect(toolCalls.length).toBe(2);
     expect(toolResults.length).toBe(2);
     expect(toolResults.map((r) => r.content)).toEqual(["echo: first", "echo: second"]);
+  });
+
+  test("AgentTool 派生子 agent，父 agent 只收到最终摘要", async () => {
+    const { client, calls } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [
+          {
+            id: "tu_agent",
+            name: AGENT_TOOL_NAME,
+            input: {
+              description: "Inspect config path",
+              prompt: "Find how config path is resolved. Report under 50 words.",
+              subagent_type: "explore",
+            },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      {
+        textChunks: ["Config uses ~/.nova-code/config.json."],
+        stopReason: "end_turn",
+      },
+      {
+        textChunks: ["The sub-agent found the config path."],
+        stopReason: "end_turn",
+      },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "delegate config lookup",
+        tools: [AgentTool, makeEchoTool()],
+        client,
+      }),
+    );
+
+    expect(calls.length).toBe(3);
+    expect(calls[1]?.toolNames).not.toContain(AGENT_TOOL_NAME);
+    expect(String(calls[1]?.system ?? "")).toContain("sub-agent");
+    const agentResult = events.find(
+      (event): event is Extract<AgentEvent, { type: "tool_result" }> =>
+        event.type === "tool_result" && event.toolName === AGENT_TOOL_NAME,
+    );
+    expect(agentResult?.isError).toBe(false);
+    expect(agentResult?.content).toContain("Sub-agent completed");
+    expect(agentResult?.content).toContain("Config uses ~/.nova-code/config.json.");
   });
 
   test("PreToolUse hook 可改写工具入参，PostToolUse hook 可改写工具结果", async () => {
