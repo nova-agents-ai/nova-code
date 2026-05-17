@@ -72,7 +72,10 @@ nova-code skill show java
 `list` 输出示例：
 
 ```text
-java    Java JVM backend and concurrency review skill.    /Users/me/.agents/skills/java/SKILL.md
+java:
+	- Java JVM backend and concurrency review skill.
+	- /Users/me/.agents/skills/java/SKILL.md
+
 ```
 
 `show` 会输出 skill 元数据、model/user invocable 状态、路径与完整正文，适合检查当前加载到的 `SKILL.md` 是否符合预期。M9 不再提供 `match` 子命令；普通语义选择由模型基于 listing 和 `Skill` tool 完成，`/name args` 则由本地 slash skill expansion 直接加载该 skill body。

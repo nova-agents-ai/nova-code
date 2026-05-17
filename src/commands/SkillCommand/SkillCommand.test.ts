@@ -25,12 +25,25 @@ afterEach(async () => {
 });
 
 describe("skill command", () => {
-  test("list 输出已加载 skill", async () => {
+  test("list 按多行格式输出已加载 skill", async () => {
     const exitCode = await runSkillCommand(["list"], commandOptions());
 
     expect(exitCode).toBe(0);
-    expect(stdout()).toContain("java");
-    expect(stdout()).toContain("Java JVM review skill.");
+    expect(stdout()).toBe(
+      `java:\n\t- Java JVM review skill.\n\t- ${home}/.agents/skills/java/SKILL.md\n\n`,
+    );
+  });
+
+  test("list 对多行 description 的每一行都加 tab，并在每个 skill 后空一行", async () => {
+    await writeSkill("multi", "|\n  first line\n  second line");
+
+    const exitCode = await runSkillCommand(["list"], commandOptions());
+
+    expect(exitCode).toBe(0);
+    expect(stdout()).toBe(
+      `java:\n\t- Java JVM review skill.\n\t- ${home}/.agents/skills/java/SKILL.md\n\n` +
+        `multi:\n\t- first line\n\tsecond line\n\t- ${home}/.agents/skills/multi/SKILL.md\n\n`,
+    );
   });
 
   test("show 输出 skill 详情", async () => {

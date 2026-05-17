@@ -81,7 +81,7 @@ function runList(skills: readonly LoadedSkill[], io: SkillCommandIO): number {
     return 0;
   }
   for (const skill of skills) {
-    io.stdout(`${skill.name}\t${skill.description}\t${skill.path}\n`);
+    io.stdout(formatSkillListItem(skill));
   }
   return 0;
 }
@@ -99,6 +99,18 @@ function runShow(skills: readonly LoadedSkill[], name: string, io: SkillCommandI
 function findSkill(skills: readonly LoadedSkill[], name: string): LoadedSkill | undefined {
   const normalized = name.toLowerCase();
   return skills.find((skill) => skill.name.toLowerCase() === normalized);
+}
+
+function formatSkillListItem(skill: LoadedSkill): string {
+  const description = formatSkillListValue(skill.description || "(none)");
+  const path = formatSkillListValue(skill.path);
+  return `${skill.name}:\n${description}\n${path}\n\n`;
+}
+
+function formatSkillListValue(value: string): string {
+  const [firstLine = "", ...restLines] = value.split(/\r?\n/);
+  const lines = [`\t- ${firstLine}`, ...restLines.map((line) => `\t${line}`)];
+  return lines.join("\n");
 }
 
 function formatSkillDetails(skill: LoadedSkill): string {
