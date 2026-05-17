@@ -21,7 +21,7 @@ import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import { loadSkillCatalog } from "../../services/skills/index.ts";
-import { builtinTools } from "../../tools.ts";
+import { builtinTools, createSkillTool } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "../AskCommand/debugSink.ts";
 import type { CommandDefinition } from "../types.ts";
 import { ChatSession } from "./ChatSession.ts";
@@ -138,6 +138,9 @@ export const chatCommand: CommandDefinition = {
         process.stderr.write(`[skill] ${warning}\n`);
       }
 
+      const skillTool = createSkillTool(skillCatalog.skills);
+      const baseTools = [...builtinTools, ...(skillTool !== undefined ? [skillTool] : [])];
+
       logEvent("tengu_started", {
         command: "chat",
         model: config.model,
@@ -151,8 +154,8 @@ export const chatCommand: CommandDefinition = {
       const exitCode = await runChatRepl({
         session,
         config,
-        tools: [...builtinTools, ...mcpRegistry.tools],
-        getTools: () => [...builtinTools, ...(mcpRegistry?.tools ?? [])],
+        tools: [...baseTools, ...mcpRegistry.tools],
+        getTools: () => [...baseTools, ...(mcpRegistry?.tools ?? [])],
         debugSink,
         llmLogSink: debug ? llmLogSink : undefined,
         permissionStore,

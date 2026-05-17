@@ -1,4 +1,4 @@
-/** M9 e2e：ask/chat 的 system prompt 会按用户 query 注入匹配到的 Skill。 */
+/** M9 e2e：ask 按 claude-code 方式暴露 skill 列表，并通过 Skill tool 加载正文。 */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -20,6 +20,7 @@ interface MockLogEntry {
   readonly hasTools: boolean;
   readonly toolChoiceType?: string;
   readonly systemSnippet?: string;
+  readonly toolResultText?: string;
 }
 
 let home: string;
@@ -36,15 +37,29 @@ afterEach(async () => {
 });
 
 describe("m9-e2e-skills", () => {
-  test("ask 根据 query 激活 ~/.agents/skills 下的 SKILL.md 并注入 system prompt", async () => {
-    const result = await runAskChild(home, mockLogFile);
+  test("ask 注入 skill 列表但不把 SKILL.md 正文放进 system prompt", async () => {
+    const result = await runAskChild(home, mockLogFile, "chat");
 
     expect(result.exitCode, `stdout=${result.stdout}\nstderr=${result.stderr}`).toBe(0);
     const log = await readMockLogEntries(mockLogFile);
     expect(log.length).toBeGreaterThanOrEqual(1);
     const first = log[0];
-    expect(first?.systemSnippet ?? "").toContain("## Skill: java");
-    expect(first?.systemSnippet ?? "").toContain("M9_JAVA_SKILL_BODY_MARKER");
+    expect(first?.systemSnippet ?? "").toContain("The following skills are available");
+    expect(first?.systemSnippet ?? "").toContain(
+      "- java: Java JVM backend and concurrency review skill.",
+    );
+    expect(first?.systemSnippet ?? "").not.toContain("M9_JAVA_SKILL_BODY_MARKER");
+  }, 20_000);
+
+  test("ask 可通过 Skill tool 加载完整 SKILL.md 正文", async () => {
+    const result = await runAskChild(home, mockLogFile, "skill-loop");
+
+    expect(result.exitCode, `stdout=${result.stdout}\nstderr=${result.stderr}`).toBe(0);
+    const log = await readMockLogEntries(mockLogFile);
+    expect(log.length).toBeGreaterThanOrEqual(2);
+    const second = log[1];
+    expect(second?.toolResultText ?? "").toContain("Base directory for this skill:");
+    expect(second?.toolResultText ?? "").toContain("M9_JAVA_SKILL_BODY_MARKER");
   }, 20_000);
 });
 
@@ -64,7 +79,11 @@ Prefer explicit concurrency, transaction, and error-handling checks.
   );
 }
 
-async function runAskChild(homeDir: string, logFile: string): Promise<RunAskResult> {
+async function runAskChild(
+  homeDir: string,
+  logFile: string,
+  scenario: string,
+): Promise<RunAskResult> {
   const proc = Bun.spawn({
     cmd: ["bun", "run", BIN_PATH, "ask", "review this Java concurrency service"],
     cwd: homeDir,
@@ -74,7 +93,7 @@ async function runAskChild(homeDir: string, logFile: string): Promise<RunAskResu
       USERPROFILE: homeDir,
       NOVA_API_KEY: "sk-mock",
       NOVA_TRANSPORT: "mock",
-      NOVA_MOCK_SCENARIO: "chat",
+      NOVA_MOCK_SCENARIO: scenario,
       NOVA_MOCK_LOG_FILE: logFile,
       NOVA_WEB_PROXY: "",
       NOVA_WEB_PROXY_DOMAINS: "",

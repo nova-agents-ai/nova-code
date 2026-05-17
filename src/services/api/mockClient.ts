@@ -4,7 +4,13 @@ import type {
   Message as SdkMessage,
 } from "@anthropic-ai/sdk/resources/messages";
 
-export type MockScenario = "chat" | "edit-loop" | "todo-loop" | "web-loop" | "mcp-loop";
+export type MockScenario =
+  | "chat"
+  | "edit-loop"
+  | "todo-loop"
+  | "web-loop"
+  | "mcp-loop"
+  | "skill-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -59,6 +65,7 @@ async function appendRequestLog(logFile: string | undefined, body: MockRequestBo
     hasTools: body.tools !== undefined,
     toolChoiceType: extractToolChoiceType(body.tool_choice),
     systemSnippet: extractSystemSnippet(body.system),
+    toolResultText: extractLastToolResultText(body.messages),
   };
   const existing = await readLogFileText(logFile);
   await Bun.write(logFile, `${existing}${JSON.stringify(entry)}\n`);
@@ -111,7 +118,31 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildMcpLoopTurn(body);
   }
 
+  if (scenario === "skill-loop") {
+    return buildSkillLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildSkillLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  if (resultCount === 0) {
+    return {
+      leadingText: "Loading skill...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Loading skill..."),
+        makeToolUseContent("toolu_skill_01", "Skill", { skill: "java" }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. Skill loaded.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. Skill loaded."),
+  };
 }
 
 function buildMcpLoopTurn(body: MockRequestBody): MockTurnPlan {
@@ -277,6 +308,19 @@ function extractLastUserText(messages: MockRequestBody["messages"]): string | un
     if (message === undefined || message.role !== "user") continue;
     if (typeof message.content !== "string") return undefined;
     return message.content;
+  }
+  return undefined;
+}
+
+function extractLastToolResultText(messages: MockRequestBody["messages"]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message === undefined || !Array.isArray(message.content)) continue;
+    for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex -= 1) {
+      const block = message.content[blockIndex];
+      if (!isObject(block) || block["type"] !== "tool_result") continue;
+      return typeof block["content"] === "string" ? block["content"] : undefined;
+    }
   }
   return undefined;
 }

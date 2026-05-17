@@ -17,6 +17,7 @@ import { FileWriteTool } from "./tools/FileWriteTool/FileWriteTool.ts";
 import { GlobTool } from "./tools/GlobTool/GlobTool.ts";
 import { GrepTool } from "./tools/GrepTool/GrepTool.ts";
 import { LSTool } from "./tools/LSTool/LSTool.ts";
+import { createSkillTool } from "./tools/SkillTool/SkillTool.ts";
 import { TodoWriteTool } from "./tools/TodoWriteTool/TodoWriteTool.ts";
 import { WebFetchTool } from "./tools/WebFetchTool/WebFetchTool.ts";
 import { WebSearchTool } from "./tools/WebSearchTool/WebSearchTool.ts";
@@ -55,6 +56,7 @@ export function findTool(name: string, tools: readonly Tool[]): Tool | undefined
 // 单工具按命名导出，便于测试与外部按需引用
 export {
   BashTool,
+  createSkillTool,
   FileEditTool,
   FileReadTool,
   FileWriteTool,

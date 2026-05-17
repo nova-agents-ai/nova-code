@@ -23,11 +23,12 @@ import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
 import {
-  getSkillInstructionsForPrompt,
+  formatSkillListingInstructions,
+  loadSkillCatalog,
   mergeInstructionBlocks,
 } from "../../services/skills/index.ts";
 import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
-import { builtinTools } from "../../tools.ts";
+import { builtinTools, createSkillTool } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "./debugSink.ts";
 import { createHeadlessPermissionProvider } from "./headlessPermissionProvider.ts";
 
@@ -79,7 +80,6 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     for (const warning of mcpRegistry.warnings) {
       process.stderr.write(`[mcp] ${warning}\n`);
     }
-    const tools = [...builtinTools, ...mcpRegistry.tools];
     // 加载三层权限规则；headless 模式下依然有 project/global 预先写入的规则
     const permissionStore = await PermissionStore.load(process.cwd());
     // headless provider：所有 ask 档统一 deny，在 stderr 留一行提示
@@ -88,25 +88,29 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     });
     // M4: 启动时一次性加载 CLAUDE.md（4 层）+ 准备 autoCompact tracking
     const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
-    const skillContext = await getSkillInstructionsForPrompt({
-      cwd: process.cwd(),
-      prompt: question,
-    });
-    for (const warning of skillContext.catalog.warnings) {
+    const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
+    for (const warning of skillCatalog.warnings) {
       process.stderr.write(`[skill] ${warning}\n`);
     }
+    const skillListingInstructions = formatSkillListingInstructions(skillCatalog.skills);
     const runtimeInstructions = mergeInstructionBlocks(
       projectInstructions,
-      skillContext.instructions,
+      skillListingInstructions,
     );
+    const skillTool = createSkillTool(skillCatalog.skills);
+    const tools = [
+      ...builtinTools,
+      ...(skillTool !== undefined ? [skillTool] : []),
+      ...mcpRegistry.tools,
+    ];
     const autoCompactTracking = createAutoCompactTrackingState();
     logEvent("tengu_started", {
       command: "ask",
       model: config.model,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
       hasProjectInstructions: projectInstructions !== undefined,
-      skillCount: skillContext.activations.length,
-      skillNames: skillContext.activations.map((activation) => activation.skill.name).join(","),
+      skillCount: skillCatalog.skills.length,
+      skillNames: skillCatalog.skills.map((skill) => skill.name).join(","),
       mcpToolCount: mcpRegistry.tools.length,
     });
     let inAssistantText = false;
