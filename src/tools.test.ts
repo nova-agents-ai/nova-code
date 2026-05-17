@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Tool } from "./Tool.ts";
 import {
+  AgentTool,
   BashTool,
   builtinTools,
   FileEditTool,
@@ -26,7 +27,7 @@ import {
 } from "./tools.ts";
 
 describe("builtinTools 注册表", () => {
-  test("包含 M7 全部 10 个工具", () => {
+  test("包含 M11 全部 11 个工具", () => {
     const names = builtinTools.map((t) => t.name);
     expect(names).toContain("LS");
     expect(names).toContain("FileRead");
@@ -36,6 +37,7 @@ describe("builtinTools 注册表", () => {
     expect(names).toContain("Grep");
     expect(names).toContain("Glob");
     expect(names).toContain("TodoWrite");
+    expect(names).toContain("Agent");
     expect(names).toContain("WebFetch");
     expect(names).toContain("WebSearch");
   });
@@ -70,6 +72,7 @@ describe("工具命名一致性 smoke test（v2.2 评审 · 代码质量 Issue #
     { tool: GrepTool, expectedName: "Grep" },
     { tool: GlobTool, expectedName: "Glob" },
     { tool: TodoWriteTool, expectedName: "TodoWrite" },
+    { tool: AgentTool, expectedName: "Agent" },
     { tool: WebFetchTool, expectedName: "WebFetch" },
     { tool: WebSearchTool, expectedName: "WebSearch" },
   ];

@@ -42,6 +42,7 @@ import { LLMApiError } from "./services/api/errors.ts";
 import {
   type AutoCompactTrackingState,
   autoCompactIfNeeded,
+  createAutoCompactTrackingState,
   MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
   shouldAutoCompact,
 } from "./services/compact/autoCompact.ts";
@@ -62,7 +63,8 @@ import {
 } from "./services/permissions/PermissionProvider.ts";
 import { evaluatePermission } from "./services/permissions/permissionEngine.ts";
 import type { PermissionStore } from "./services/permissions/permissionStore.ts";
-import type { Tool } from "./Tool.ts";
+import type { SubAgentRunParams, SubAgentRuntime, Tool } from "./Tool.ts";
+import { AGENT_TOOL_NAME, SubAgentTypeEnum } from "./tools/AgentTool/constants.ts";
 import { TODO_WRITE_TOOL_NAME } from "./tools/TodoWriteTool/constants.ts";
 import { TODO_WRITE_SYSTEM_PROMPT } from "./tools/TodoWriteTool/prompt.ts";
 import { findTool } from "./tools.ts";
@@ -72,6 +74,7 @@ import {
   MessageRoleEnum,
   type NovaContentBlock,
   type NovaMessage,
+  type TextBlock,
   type ToolResultBlock,
   type ToolUseBlock,
 } from "./types/message.ts";
@@ -325,15 +328,19 @@ export async function* runAgentLoop(
     }
 
     const toolResults = yield* executeToolsAndYieldEvents({
+      config,
+      client,
       toolUses,
       tools,
       signal,
+      llmLogSink: params.llmLogSink,
       permissionMode: params.permissionMode,
       permissionStore: params.permissionStore,
       permissionProvider: params.permissionProvider,
       cwd: params.cwd,
       hooks: params.hooks,
       sessionId: params.sessionId,
+      parentMessages: messages.slice(0, -1),
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -522,9 +529,12 @@ function writeLlmError(
 // ────────────────────────────────────────────────────────────────────────────
 
 interface ExecuteToolsParams {
+  readonly config: ResolvedConfig;
+  readonly client: Anthropic;
   readonly toolUses: readonly ToolUseBlock[];
   readonly tools: readonly Tool[];
   readonly signal: AbortSignal;
+  readonly llmLogSink?: LlmLogSink;
   // M3 权限系统：全部可选，不传时退化为"全放行"（向后兼容）
   readonly permissionMode?: PermissionMode;
   readonly permissionStore?: PermissionStore;
@@ -532,6 +542,7 @@ interface ExecuteToolsParams {
   readonly cwd?: string;
   readonly hooks?: HooksConfig;
   readonly sessionId?: string;
+  readonly parentMessages: readonly NovaMessage[];
 }
 
 /** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
@@ -546,17 +557,35 @@ async function* executeToolsAndYieldEvents(
   params: ExecuteToolsParams,
 ): AsyncGenerator<AgentEvent, ToolResultBlock[], void> {
   const {
+    config,
+    client,
     toolUses,
     tools,
     signal,
+    llmLogSink,
     permissionMode,
     permissionStore,
     permissionProvider,
     cwd,
     hooks,
     sessionId,
+    parentMessages,
   } = params;
   const resolvedCwd = cwd ?? process.cwd();
+  const subAgentRuntime = createSubAgentRuntime({
+    config,
+    client,
+    tools,
+    signal,
+    llmLogSink,
+    permissionMode,
+    permissionStore,
+    permissionProvider,
+    cwd: resolvedCwd,
+    hooks,
+    sessionId,
+    parentMessages,
+  });
 
   // 先按声明顺序发出所有 tool_call 事件（与原行为一致，便于 UI 先看到本轮工具列表）
   for (const use of toolUses) {
@@ -701,7 +730,7 @@ async function* executeToolsAndYieldEvents(
       if (d === undefined) {
         return Promise.reject(new Error("internal: missing decision entry"));
       }
-      return executeOneTool(d.use, tools, signal);
+      return executeOneTool(d.use, tools, signal, subAgentRuntime);
     }),
   );
 
@@ -899,10 +928,194 @@ function buildPersistedRule(toolName: string, input: unknown): PermissionRule | 
   return { toolName, behavior: "allow" };
 }
 
+interface SubAgentRuntimeParams {
+  readonly config: ResolvedConfig;
+  readonly client: Anthropic;
+  readonly tools: readonly Tool[];
+  readonly signal: AbortSignal;
+  readonly llmLogSink?: LlmLogSink;
+  readonly permissionMode?: PermissionMode;
+  readonly permissionStore?: PermissionStore;
+  readonly permissionProvider?: PermissionProvider;
+  readonly cwd: string;
+  readonly hooks?: HooksConfig;
+  readonly sessionId?: string;
+  readonly parentMessages: readonly NovaMessage[];
+}
+
+interface SubAgentPromptParts {
+  readonly systemPrompt: string;
+  readonly userPrompt: string;
+}
+
+const MAX_SUB_AGENT_CONTEXT_CHARS = 24_000;
+const MAX_SUB_AGENT_CONTEXT_MESSAGES = 24;
+const MAX_SUB_AGENT_BLOCK_CHARS = 4_000;
+const EXPLORE_SUB_AGENT_TOOL_NAMES = new Set([
+  "LS",
+  "FileRead",
+  "Grep",
+  "Glob",
+  "WebFetch",
+  "WebSearch",
+  "Skill",
+]);
+
+function createSubAgentRuntime(params: SubAgentRuntimeParams): SubAgentRuntime {
+  return {
+    run: async (request) => await runSubAgent(request, params),
+  };
+}
+
+async function runSubAgent(
+  request: SubAgentRunParams,
+  runtime: SubAgentRuntimeParams,
+): Promise<{ readonly agentType: string; readonly turns: number; readonly summary: string }> {
+  const agentType = resolveSubAgentType(request.subagentType);
+  const childTools = selectSubAgentTools(runtime.tools, agentType);
+  const promptParts = buildSubAgentPromptParts(request, runtime.parentMessages, agentType);
+  const generator = runAgentLoop({
+    config: runtime.config,
+    userPrompt: promptParts.userPrompt,
+    tools: childTools,
+    signal: runtime.signal,
+    client: runtime.client,
+    systemPrompt: promptParts.systemPrompt,
+    ...(runtime.llmLogSink !== undefined ? { llmLogSink: runtime.llmLogSink } : {}),
+    ...(runtime.permissionMode !== undefined ? { permissionMode: runtime.permissionMode } : {}),
+    ...(runtime.permissionStore !== undefined ? { permissionStore: runtime.permissionStore } : {}),
+    ...(runtime.permissionProvider !== undefined
+      ? { permissionProvider: runtime.permissionProvider }
+      : {}),
+    cwd: runtime.cwd,
+    autoCompactEnabled: true,
+    autoCompactTracking: createAutoCompactTrackingState(),
+    ...(runtime.hooks !== undefined ? { hooks: runtime.hooks } : {}),
+    sessionId: formatSubAgentSessionId(runtime.sessionId, request.description),
+  });
+  const { finalMessage, turns } = await collectSubAgentFinalMessage(generator);
+  return { agentType, turns, summary: extractTextFromMessage(finalMessage) };
+}
+
+function resolveSubAgentType(value: string | undefined): SubAgentTypeEnum {
+  if (value === undefined) return SubAgentTypeEnum.GENERAL_PURPOSE;
+  if (value === SubAgentTypeEnum.GENERAL_PURPOSE || value === SubAgentTypeEnum.EXPLORE) {
+    return value;
+  }
+  return SubAgentTypeEnum.GENERAL_PURPOSE;
+}
+
+function selectSubAgentTools(tools: readonly Tool[], agentType: SubAgentTypeEnum): readonly Tool[] {
+  return tools.filter((tool) => {
+    if (tool.name === AGENT_TOOL_NAME) return false;
+    if (tool.name === TODO_WRITE_TOOL_NAME) return false;
+    if (agentType === SubAgentTypeEnum.EXPLORE) {
+      return EXPLORE_SUB_AGENT_TOOL_NAMES.has(tool.name);
+    }
+    return true;
+  });
+}
+
+function buildSubAgentPromptParts(
+  request: SubAgentRunParams,
+  parentMessages: readonly NovaMessage[],
+  agentType: SubAgentTypeEnum,
+): SubAgentPromptParts {
+  const parentContext = formatParentContext(parentMessages);
+  const typeHint =
+    agentType === SubAgentTypeEnum.EXPLORE
+      ? "You are in read-only exploration mode. Do not modify files or run mutating commands."
+      : "You may use the provided tools to complete the delegated task within scope.";
+  return {
+    systemPrompt:
+      "You are a nova-code sub-agent spawned by a parent coding assistant. " +
+      "Work independently, keep intermediate tool output out of the parent context, and return a concise final report. " +
+      "Do not spawn other agents. " +
+      typeHint,
+    userPrompt: [
+      "<subagent_task>",
+      `Description: ${request.description}`,
+      "",
+      request.prompt,
+      "</subagent_task>",
+      "",
+      "<parent_context>",
+      parentContext === "" ? "(no prior parent context)" : parentContext,
+      "</parent_context>",
+      "",
+      "Return only the final report for the parent agent.",
+    ].join("\n"),
+  };
+}
+
+function formatParentContext(messages: readonly NovaMessage[]): string {
+  const recentMessages = messages.slice(-MAX_SUB_AGENT_CONTEXT_MESSAGES);
+  const text = recentMessages
+    .map((message) => `${message.role}: ${formatMessageContent(message.content)}`)
+    .join("\n\n");
+  return truncateText(text, MAX_SUB_AGENT_CONTEXT_CHARS);
+}
+
+function formatMessageContent(content: NovaMessage["content"]): string {
+  if (typeof content === "string") return truncateText(content, MAX_SUB_AGENT_BLOCK_CHARS);
+  return truncateText(
+    content.map(formatContentBlockForSubAgent).join("\n"),
+    MAX_SUB_AGENT_BLOCK_CHARS,
+  );
+}
+
+function formatContentBlockForSubAgent(block: NovaContentBlock): string {
+  switch (block.type) {
+    case "text":
+      return block.text;
+    case "tool_use":
+      return `[tool_use ${block.name}] ${JSON.stringify(block.input)}`;
+    case "tool_result":
+      return `[tool_result ${block.tool_use_id}] ${block.content}`;
+  }
+}
+
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n[truncated at ${maxChars} characters]`;
+}
+
+async function collectSubAgentFinalMessage(
+  generator: AsyncGenerator<AgentEvent, NovaMessage, void>,
+): Promise<{ readonly finalMessage: NovaMessage; readonly turns: number }> {
+  let turns = 0;
+  while (true) {
+    const next = await generator.next();
+    if (next.done === true) return { finalMessage: next.value, turns };
+    if (next.value.type === "done") turns = next.value.turns;
+  }
+}
+
+function extractTextFromMessage(message: NovaMessage): string {
+  if (typeof message.content === "string") return message.content;
+  const text = message.content
+    .filter((block): block is TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  return text === "" ? "(sub-agent completed without text output)" : text;
+}
+
+function formatSubAgentSessionId(sessionId: string | undefined, description: string): string {
+  const base = sessionId ?? "unknown";
+  const suffix = description
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return suffix === "" ? `${base}:agent` : `${base}:agent:${suffix}`;
+}
+
 async function executeOneTool(
   use: ToolUseBlock,
   tools: readonly Tool[],
   signal: AbortSignal,
+  subAgentRuntime: SubAgentRuntime,
 ): Promise<string> {
   const tool = findTool(use.name, tools);
   if (tool === undefined) {
@@ -911,7 +1124,7 @@ async function executeOneTool(
       `Unknown tool '${use.name}'. Available tools: ${tools.map((t) => t.name).join(", ") || "(none)"}.`,
     );
   }
-  return await tool.execute(use.input, { signal });
+  return await tool.execute(use.input, { signal, subAgentRuntime });
 }
 
 // ────────────────────────────────────────────────────────────────────────────

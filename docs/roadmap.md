@@ -287,13 +287,21 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 测试：新增 hooks 单测、QueryEngine hook 集成测试、renderAgentEvent hook 测试、`m10-e2e-hooks` 子进程验证
 - 详见 `docs/design/M10-hooks.md`、使用手册 `docs/manual/M10-usage-guide.md`、实现架构 `docs/architecture/M10-architecture.md`
 
-### M11 — AgentTool（子 agent 派生）
+### M11 — AgentTool（子 agent 派生）✅（已完成）
 
 模型可派生子 agent 跑独立子任务，主 agent 只看摘要。
 
 **参照**：`claude-code/src/Task.ts` + `tools/AgentTool/`
 
 **前置**：M2 REPL + M4 compact 都已稳定
+
+**交付摘要**：
+- 新增 `Agent` 内置工具与 `ToolExecutionContext.subAgentRuntime`，父 agent 可通过普通 tool_use 同步派生 one-shot 子 agent
+- 子 agent 复用同一份 config/client/permission/hooks/cwd/signal/debug LLM sink；内部单独启用 auto-compact tracking
+- 支持 `general-purpose` / `explore` 两个内置子 agent 类型；子工具池默认移除 `Agent` / `TodoWrite`，`explore` 仅保留只读搜索/读取/Skill/Web 工具
+- 父上下文以最近消息纯文本形式注入子 prompt，父 agent 只接收最终摘要，不接收子 agent 中间工具噪音
+- mock transport 新增 `NOVA_MOCK_SCENARIO=agent-loop`，新增 QueryEngine 单测与 M11 e2e 子进程验证
+- 详见 `docs/design/M11-agent-tool.md`、使用手册 `docs/manual/M11-usage-guide.md`、实现架构 `docs/architecture/M11-architecture.md`
 
 ### M12 — 多 Provider 抽象
 
@@ -521,6 +529,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.15**（2026-05-17）：M11 AgentTool 子 agent 派生落地。新增 `src/tools/AgentTool` 与 `SubAgentRuntime` 注入，支持模型通过 `Agent` 工具启动同步 one-shot 子 agent；子 agent 复用父会话配置、权限、hooks 与 cwd，父上下文文本化注入，父 agent 只收到最终摘要；支持 `general-purpose` / `explore` 两个轻量类型并禁止递归 Agent；mock transport 新增 `agent-loop`，新增 M11 设计文档 / 使用手册 / 架构快照。
 - **v2.14**（2026-05-17）：M10 Hooks 系统落地。新增 `src/services/hooks`，支持 `PreToolUse` / `PostToolUse` command hooks；配置写入 `~/.nova-code/config.json` 的 `hooks` 字段，支持 matcher、轻量 `if` 条件、超时、stdin JSON 协议、exit code 2 阻断、stdout JSON `updatedInput` / `updatedOutput`；QueryEngine 在权限系统前执行 PreToolUse、工具执行后执行 PostToolUse；新增 `hook_result` AgentEvent 与 ask/chat 渲染；新增 M10 设计文档 / 使用手册 / 架构快照；全量 706 tests 通过。
 - **v2.13**（2026-05-17）：M9 Skills 系统落地并对齐 claude-code 当前机制。新增 `src/services/skills` 与 `Skill` tool，支持 `~/.agents/skills/<name>/SKILL.md` 直接子目录形态的 frontmatter + body 加载；ask/chat 只注入 skill 名称/描述 listing，完整 body 由模型语义选择后通过 `Skill` tool 加载，或由用户 `/name args` 显式调用时本地展开；`skill` CLI 保留 `list/show`，不再提供本地字符匹配 `match` 子命令；支持 `disable-model-invocation`、`user-invocable`、`NOVA_DISABLE_SKILLS` 与 `NOVA_SKILL_DIRS`；新增 M9 设计文档 / 使用手册 / 架构快照；全量 695 tests 通过。
 - **v2.12**（2026-05-16）：M8.1 MCP HTTP/refresh 落地。新增 `McpStreamableHttpClient`，支持 Streamable HTTP `POST` JSON response / `POST` SSE response / 初始化后 `GET` SSE notification；`mcpServers` 支持 `type: "http"`、`url`、`headers` 且 `config get` 对 headers 脱敏；新增 `nova-code mcp add-http`；stdio 与 HTTP client 均可分发 `notifications/tools/list_changed`，registry 会重新 `tools/list` 并刷新 `MCP__server__tool` bridge，chat 下一轮读取最新工具；新增 M8.1 设计文档 / 使用手册 / 架构快照；全量 678 tests 通过。

@@ -4,12 +4,13 @@
  * 与 claude-code 顶层 src/tools.ts 对齐 —— 注册表在顶层，具体实现在
  * src/tools/<ToolName>/<ToolName>.ts。
  *
- * M7 完整内置工具集（10 个）：
+ * M11 完整内置工具集（11 个）：
  * - LS / FileRead / FileWrite / FileEdit / Bash / Grep / Glob / TodoWrite
- * - WebFetch / WebSearch
+ * - Agent / WebFetch / WebSearch
  */
 
 import type { Tool } from "./Tool.ts";
+import { AgentTool } from "./tools/AgentTool/AgentTool.ts";
 import { BashTool } from "./tools/BashTool/BashTool.ts";
 import { FileEditTool } from "./tools/FileEditTool/FileEditTool.ts";
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.ts";
@@ -35,6 +36,7 @@ export const builtinTools: readonly Tool[] = [
   GrepTool,
   GlobTool,
   TodoWriteTool,
+  AgentTool,
   WebFetchTool,
   WebSearchTool,
 ];
@@ -55,6 +57,7 @@ export function findTool(name: string, tools: readonly Tool[]): Tool | undefined
 
 // 单工具按命名导出，便于测试与外部按需引用
 export {
+  AgentTool,
   BashTool,
   createSkillTool,
   FileEditTool,
