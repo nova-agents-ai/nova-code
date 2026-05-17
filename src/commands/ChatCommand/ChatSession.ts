@@ -28,6 +28,7 @@ import { buildSystemPrompt, type LlmLogSink, runAgentLoop, toSdkTool } from "../
 import { createAnthropicClient } from "../../services/api/client.ts";
 import type { AutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { compactConversation } from "../../services/compact/compact.ts";
+import type { HooksConfig } from "../../services/hooks/types.ts";
 import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { Tool } from "../../Tool.ts";
@@ -76,6 +77,8 @@ export interface ChatTurnContext {
   readonly autoCompactEnabled?: boolean;
   readonly autoCompactTracking?: AutoCompactTrackingState;
   readonly projectInstructions?: string;
+  // ── M10 Hooks 注入（透传给 runAgentLoop）───────────────────────────────
+  readonly hooks?: HooksConfig;
 }
 
 /**
@@ -159,6 +162,8 @@ export class ChatSession {
       ...(ctx.projectInstructions !== undefined
         ? { projectInstructions: ctx.projectInstructions }
         : {}),
+      ...(ctx.hooks !== undefined ? { hooks: ctx.hooks } : {}),
+      sessionId: this._meta.sessionId,
     });
 
     // 累积本轮待 flush 的 tool_result 块；下一个 turn_start 到达时打包成 user 消息
@@ -192,6 +197,7 @@ export class ChatSession {
         case "tool_call":
         case "permission_request":
         case "permission_decision":
+        case "hook_result":
           break;
       }
       yield event;

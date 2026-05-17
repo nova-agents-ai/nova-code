@@ -273,10 +273,19 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 测试：新增 parser/loader/prompt/slash 单测、SkillTool 单测、SkillCommand 单测、`m9-e2e-skills` 子进程 listing/body/slash 展开验证
 - 详见 `docs/design/M9-skills.md`、使用手册 `docs/manual/M9-usage-guide.md`、实现架构 `docs/architecture/M9-architecture.md`
 
-### M10 — Hooks 系统
+### M10 — Hooks 系统 ✅（已完成）
 
 工具调用前后的用户脚本拦截。
 **参照**：`claude-code/src/utils/hooks/`
+
+**交付摘要**：
+- 新增 `src/services/hooks/`（types / config validator / matcher / Bun.spawn command executor / hook runner）
+- `~/.nova-code/config.json` 新增 `hooks` 字段，支持 `PreToolUse` / `PostToolUse` 两个事件、`matcher`、`if` 条件、`timeout` 与 `type:"command"`
+- QueryEngine 工具生命周期改为 `tool_call → PreToolUse → permissionEngine → execute tool → PostToolUse → tool_result`
+- PreToolUse 支持 `updatedInput` 与阻断；PostToolUse 支持 `updatedOutput`、`additionalContext` 与阻断
+- AgentEvent 新增 `hook_result`；debug sink 记录完整 stdout/stderr，ask/chat 普通 UI 只展示阻断 / warning / cancelled
+- 测试：新增 hooks 单测、QueryEngine hook 集成测试、renderAgentEvent hook 测试、`m10-e2e-hooks` 子进程验证
+- 详见 `docs/design/M10-hooks.md`、使用手册 `docs/manual/M10-usage-guide.md`、实现架构 `docs/architecture/M10-architecture.md`
 
 ### M11 — AgentTool（子 agent 派生）
 
@@ -512,6 +521,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.14**（2026-05-17）：M10 Hooks 系统落地。新增 `src/services/hooks`，支持 `PreToolUse` / `PostToolUse` command hooks；配置写入 `~/.nova-code/config.json` 的 `hooks` 字段，支持 matcher、轻量 `if` 条件、超时、stdin JSON 协议、exit code 2 阻断、stdout JSON `updatedInput` / `updatedOutput`；QueryEngine 在权限系统前执行 PreToolUse、工具执行后执行 PostToolUse；新增 `hook_result` AgentEvent 与 ask/chat 渲染；新增 M10 设计文档 / 使用手册 / 架构快照；全量 706 tests 通过。
 - **v2.13**（2026-05-17）：M9 Skills 系统落地并对齐 claude-code 当前机制。新增 `src/services/skills` 与 `Skill` tool，支持 `~/.agents/skills/<name>/SKILL.md` 直接子目录形态的 frontmatter + body 加载；ask/chat 只注入 skill 名称/描述 listing，完整 body 由模型语义选择后通过 `Skill` tool 加载，或由用户 `/name args` 显式调用时本地展开；`skill` CLI 保留 `list/show`，不再提供本地字符匹配 `match` 子命令；支持 `disable-model-invocation`、`user-invocable`、`NOVA_DISABLE_SKILLS` 与 `NOVA_SKILL_DIRS`；新增 M9 设计文档 / 使用手册 / 架构快照；全量 695 tests 通过。
 - **v2.12**（2026-05-16）：M8.1 MCP HTTP/refresh 落地。新增 `McpStreamableHttpClient`，支持 Streamable HTTP `POST` JSON response / `POST` SSE response / 初始化后 `GET` SSE notification；`mcpServers` 支持 `type: "http"`、`url`、`headers` 且 `config get` 对 headers 脱敏；新增 `nova-code mcp add-http`；stdio 与 HTTP client 均可分发 `notifications/tools/list_changed`，registry 会重新 `tools/list` 并刷新 `MCP__server__tool` bridge，chat 下一轮读取最新工具；新增 M8.1 设计文档 / 使用手册 / 架构快照；全量 678 tests 通过。
 - **v2.11**（2026-05-15）：M8 MCP 客户端协议落地。新增 `services/mcp` 最小 stdio JSON-RPC client 与 MCP Tool bridge；`PersistedConfig` 新增 `mcpServers`，`nova-code mcp list|add|remove|tools` 管理 server 配置；ask/chat 启动时将 `builtinTools + MCP__server__tool` 动态工具传入 QueryEngine；MCP 工具默认走 M3 权限审批，可信 server 可设 `autoApprove=true`；新增 echo fixture、MCP 单测与 `m8-e2e-mcp`；新增 M8 设计文档 / 使用手册 / 架构快照；全量 673 tests 通过。

@@ -15,6 +15,7 @@
  * - 类型用 readonly 标记不可变属性，匹配 messages 数组追加而非原地变更的语义。
  */
 
+import type { HookEventName, HookExecutionOutcome } from "../services/hooks/types.ts";
 import type { PermissionDecision, PermissionRuleSource } from "./permissions.ts";
 
 /** 一段文本内容块。 */
@@ -113,6 +114,19 @@ export type AgentEvent =
       readonly toolName: string;
       readonly content: string;
       readonly isError: boolean;
+    }
+  /** M10：用户配置的 command hook 执行完成。默认 UI 只展示阻断/错误，debug 会保留全量。 */
+  | {
+      readonly type: "hook_result";
+      readonly hookEventName: HookEventName;
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly command: string;
+      readonly outcome: HookExecutionOutcome;
+      readonly exitCode: number | undefined;
+      readonly durationMs: number;
+      readonly stdout: string;
+      readonly stderr: string;
     }
   /** 整个 agent loop 结束。 */
   | {

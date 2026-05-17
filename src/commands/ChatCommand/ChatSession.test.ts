@@ -69,6 +69,7 @@ const FIXED_CONFIG: ResolvedConfig = {
   webProxy: undefined,
   webProxyDomains: [],
   mcpServers: {},
+  hooks: {},
 };
 
 function makeCtx(agentLoop: typeof runAgentLoop): ChatTurnContext {

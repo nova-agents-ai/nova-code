@@ -18,6 +18,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError } from "../errors/index.ts";
+import { validateHooksConfig } from "../services/hooks/config.ts";
+import type { HooksConfig } from "../services/hooks/types.ts";
 import type {
   McpServerConfig,
   McpServersConfig,
@@ -72,6 +74,8 @@ export interface PersistedConfig {
   readonly webProxyDomains?: readonly string[];
   /** M8: configured MCP servers, keyed by stable server name. */
   readonly mcpServers?: McpServersConfig;
+  /** M10: tool lifecycle hooks, keyed by hook event name. */
+  readonly hooks?: HooksConfig;
 }
 
 /**
@@ -87,6 +91,7 @@ export interface ResolvedConfig {
   readonly webProxy: string | undefined;
   readonly webProxyDomains: readonly string[];
   readonly mcpServers: McpServersConfig;
+  readonly hooks: HooksConfig;
 }
 
 /**
@@ -207,6 +212,7 @@ export function resolveConfig(
         ? parseEnvList(env[ENV_WEB_PROXY_DOMAINS])
         : (persisted.webProxyDomains ?? []),
     mcpServers: persisted.mcpServers ?? {},
+    hooks: persisted.hooks ?? {},
   };
 }
 
@@ -311,6 +317,10 @@ function validatePersistedConfig(value: unknown, path: string): PersistedConfig 
 
   if (obj.mcpServers !== undefined) {
     result.mcpServers = validateMcpServersConfig(obj.mcpServers, path);
+  }
+
+  if (obj.hooks !== undefined) {
+    result.hooks = validateHooksConfig(obj.hooks, `Config at ${path}`);
   }
 
   return result;

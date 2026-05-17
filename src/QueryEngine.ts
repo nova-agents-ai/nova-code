@@ -46,6 +46,13 @@ import {
   shouldAutoCompact,
 } from "./services/compact/autoCompact.ts";
 import { tokenCountWithEstimation } from "./services/compact/tokens.ts";
+import { executeHookBatch } from "./services/hooks/hookRunner.ts";
+import {
+  type HookBatchResult,
+  HookEventName,
+  type HookExecutionRecord,
+  type HooksConfig,
+} from "./services/hooks/types.ts";
 import { BASH_TOOL_NAME } from "./services/permissions/bashRuleMatcher.ts";
 import { extractBashCommand } from "./services/permissions/dangerousPatterns.ts";
 import { extractFilePath, isFileWriteToolName } from "./services/permissions/fileRuleMatcher.ts";
@@ -161,6 +168,12 @@ export interface AgentLoopParams {
    * 启动时由 chat / ask 命令加载并透传，避免每轮 LLM 调用都重新读盘。
    */
   readonly projectInstructions?: string;
+
+  // ── M10 Hooks 注入（全部可选）─────────────────────────────────────────
+  /** 已解析的 hooks 配置；不传或空对象时不会执行任何用户脚本。 */
+  readonly hooks?: HooksConfig;
+  /** hook stdin JSON 中的 session_id；ask 可省略，chat 传入真实 sessionId。 */
+  readonly sessionId?: string;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
@@ -319,6 +332,8 @@ export async function* runAgentLoop(
       permissionStore: params.permissionStore,
       permissionProvider: params.permissionProvider,
       cwd: params.cwd,
+      hooks: params.hooks,
+      sessionId: params.sessionId,
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -515,6 +530,8 @@ interface ExecuteToolsParams {
   readonly permissionStore?: PermissionStore;
   readonly permissionProvider?: PermissionProvider;
   readonly cwd?: string;
+  readonly hooks?: HooksConfig;
+  readonly sessionId?: string;
 }
 
 /** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
@@ -522,13 +539,24 @@ interface ToolDecision {
   readonly use: ToolUseBlock;
   readonly decision: "allow" | "deny";
   readonly denyReason?: string;
+  readonly denyPrefix?: string;
 }
 
 async function* executeToolsAndYieldEvents(
   params: ExecuteToolsParams,
 ): AsyncGenerator<AgentEvent, ToolResultBlock[], void> {
-  const { toolUses, tools, signal, permissionMode, permissionStore, permissionProvider, cwd } =
-    params;
+  const {
+    toolUses,
+    tools,
+    signal,
+    permissionMode,
+    permissionStore,
+    permissionProvider,
+    cwd,
+    hooks,
+    sessionId,
+  } = params;
+  const resolvedCwd = cwd ?? process.cwd();
 
   // 先按声明顺序发出所有 tool_call 事件（与原行为一致，便于 UI 先看到本轮工具列表）
   for (const use of toolUses) {
@@ -545,37 +573,58 @@ async function* executeToolsAndYieldEvents(
   for (const use of toolUses) {
     if (signal.aborted) throw new AbortError();
 
-    // 未注入权限系统 → 全放行（兼容现有测试与 M1/M2 行为）
-    if (permissionMode === undefined || permissionStore === undefined) {
-      decisions.push({ use, decision: "allow" });
+    const preHook = await executePreToolUseHooks({
+      use,
+      hooks,
+      signal,
+      cwd: resolvedCwd,
+      sessionId,
+    });
+    yield* yieldHookRecords(preHook.records);
+    if (preHook.blocked !== undefined) {
+      decisions.push({
+        use,
+        decision: "deny",
+        denyReason: preHook.blocked.reason,
+        denyPrefix: "Hook blocked",
+      });
       continue;
     }
 
-    const tool = findTool(use.name, tools);
+    const effectiveUse =
+      preHook.updatedInput === undefined ? use : { ...use, input: preHook.updatedInput };
+
+    // 未注入权限系统 → 全放行（兼容现有测试与 M1/M2 行为）
+    if (permissionMode === undefined || permissionStore === undefined) {
+      decisions.push({ use: effectiveUse, decision: "allow" });
+      continue;
+    }
+
+    const tool = findTool(effectiveUse.name, tools);
     const requiresApproval = tool?.requiresApproval ?? false;
     const evalResult = evaluatePermission({
       mode: permissionMode,
-      toolName: use.name,
+      toolName: effectiveUse.name,
       requiresApproval,
-      input: use.input,
+      input: effectiveUse.input,
       rules: permissionStore.getMergedRules(),
-      cwd: cwd ?? process.cwd(),
+      cwd: resolvedCwd,
     });
 
     if (evalResult.decision === "allow") {
-      decisions.push({ use, decision: "allow" });
+      decisions.push({ use: effectiveUse, decision: "allow" });
       continue;
     }
 
     if (evalResult.decision === "deny") {
       yield {
         type: "permission_decision",
-        toolUseId: use.id,
-        toolName: use.name,
+        toolUseId: effectiveUse.id,
+        toolName: effectiveUse.name,
         decision: "deny",
         reason: evalResult.reason,
       };
-      decisions.push({ use, decision: "deny", denyReason: evalResult.reason });
+      decisions.push({ use: effectiveUse, decision: "deny", denyReason: evalResult.reason });
       continue;
     }
 
@@ -584,27 +633,27 @@ async function* executeToolsAndYieldEvents(
       const reason = `${evalResult.reason} (no permission provider configured, denying by default)`;
       yield {
         type: "permission_decision",
-        toolUseId: use.id,
-        toolName: use.name,
+        toolUseId: effectiveUse.id,
+        toolName: effectiveUse.name,
         decision: "deny",
         reason,
       };
-      decisions.push({ use, decision: "deny", denyReason: reason });
+      decisions.push({ use: effectiveUse, decision: "deny", denyReason: reason });
       continue;
     }
 
     yield {
       type: "permission_request",
-      toolUseId: use.id,
-      toolName: use.name,
-      input: use.input,
+      toolUseId: effectiveUse.id,
+      toolName: effectiveUse.name,
+      input: effectiveUse.input,
       reason: evalResult.reason,
     };
 
     const choice = await permissionProvider.requestPermission({
-      toolName: use.name,
-      toolUseId: use.id,
-      input: use.input,
+      toolName: effectiveUse.name,
+      toolUseId: effectiveUse.id,
+      input: effectiveUse.input,
       reason: evalResult.reason,
     });
     const outcome = decisionFromUserChoice(choice);
@@ -612,7 +661,7 @@ async function* executeToolsAndYieldEvents(
     // 如果用户选了升级，把规则写回 store（session 只改内存；project/global 会写盘）
     let persisted: "session" | "project" | "global" | undefined;
     if (outcome.decision === "allow" && outcome.persistTo !== undefined) {
-      const rule = buildPersistedRule(use.name, use.input);
+      const rule = buildPersistedRule(effectiveUse.name, effectiveUse.input);
       if (rule !== undefined) {
         await permissionStore.addRule(outcome.persistTo, rule);
         persisted = outcome.persistTo;
@@ -621,17 +670,21 @@ async function* executeToolsAndYieldEvents(
 
     yield {
       type: "permission_decision",
-      toolUseId: use.id,
-      toolName: use.name,
+      toolUseId: effectiveUse.id,
+      toolName: effectiveUse.name,
       decision: outcome.decision,
       reason: `user chose ${choice}`,
       ...(persisted !== undefined ? { persisted } : {}),
     };
 
     if (outcome.decision === "allow") {
-      decisions.push({ use, decision: "allow" });
+      decisions.push({ use: effectiveUse, decision: "allow" });
     } else {
-      decisions.push({ use, decision: "deny", denyReason: `user denied (${choice})` });
+      decisions.push({
+        use: effectiveUse,
+        decision: "deny",
+        denyReason: `user denied (${choice})`,
+      });
     }
   }
 
@@ -661,7 +714,7 @@ async function* executeToolsAndYieldEvents(
     const use = d.use;
 
     if (d.decision === "deny") {
-      const errorMessage = `Permission denied: ${d.denyReason ?? "no reason"}`;
+      const errorMessage = `${d.denyPrefix ?? "Permission denied"}: ${d.denyReason ?? "no reason"}`;
       const block: ToolResultBlock = {
         type: "tool_result",
         tool_use_id: use.id,
@@ -684,25 +737,49 @@ async function* executeToolsAndYieldEvents(
     if (outcome === undefined) continue;
 
     if (outcome.status === "fulfilled") {
+      const postHook = await executePostToolUseHooks({
+        use,
+        content: outcome.value,
+        isError: false,
+        hooks,
+        signal,
+        cwd: resolvedCwd,
+        sessionId,
+      });
+      yield* yieldHookRecords(postHook.records);
+      const finalContent = applyPostHookContent(outcome.value, postHook);
+      const finalIsError = postHook.blocked !== undefined;
       const block: ToolResultBlock = {
         type: "tool_result",
         tool_use_id: use.id,
-        content: outcome.value,
+        content: finalContent,
+        ...(finalIsError ? { is_error: true } : {}),
       };
       results.push(block);
       yield {
         type: "tool_result",
         toolUseId: use.id,
         toolName: use.name,
-        content: outcome.value,
-        isError: false,
+        content: finalContent,
+        isError: finalIsError,
       };
     } else {
       const errorMessage = describeToolError(outcome.reason, use.name);
+      const postHook = await executePostToolUseHooks({
+        use,
+        content: errorMessage,
+        isError: true,
+        hooks,
+        signal,
+        cwd: resolvedCwd,
+        sessionId,
+      });
+      yield* yieldHookRecords(postHook.records);
+      const finalContent = applyPostHookContent(errorMessage, postHook);
       const block: ToolResultBlock = {
         type: "tool_result",
         tool_use_id: use.id,
-        content: errorMessage,
+        content: finalContent,
         is_error: true,
       };
       results.push(block);
@@ -710,12 +787,90 @@ async function* executeToolsAndYieldEvents(
         type: "tool_result",
         toolUseId: use.id,
         toolName: use.name,
-        content: errorMessage,
+        content: finalContent,
         isError: true,
       };
     }
   }
   return results;
+}
+
+async function executePreToolUseHooks(params: {
+  readonly use: ToolUseBlock;
+  readonly hooks: HooksConfig | undefined;
+  readonly signal: AbortSignal;
+  readonly cwd: string;
+  readonly sessionId: string | undefined;
+}): Promise<HookBatchResult> {
+  return await executeHookBatch({
+    config: params.hooks,
+    event: HookEventName.PRE_TOOL_USE,
+    cwd: params.cwd,
+    signal: params.signal,
+    input: {
+      hook_event_name: HookEventName.PRE_TOOL_USE,
+      session_id: params.sessionId ?? "unknown",
+      cwd: params.cwd,
+      tool_name: params.use.name,
+      tool_input: params.use.input,
+      tool_use_id: params.use.id,
+    },
+  });
+}
+
+async function executePostToolUseHooks(params: {
+  readonly use: ToolUseBlock;
+  readonly content: string;
+  readonly isError: boolean;
+  readonly hooks: HooksConfig | undefined;
+  readonly signal: AbortSignal;
+  readonly cwd: string;
+  readonly sessionId: string | undefined;
+}): Promise<HookBatchResult> {
+  return await executeHookBatch({
+    config: params.hooks,
+    event: HookEventName.POST_TOOL_USE,
+    cwd: params.cwd,
+    signal: params.signal,
+    input: {
+      hook_event_name: HookEventName.POST_TOOL_USE,
+      session_id: params.sessionId ?? "unknown",
+      cwd: params.cwd,
+      tool_name: params.use.name,
+      tool_input: params.use.input,
+      tool_use_id: params.use.id,
+      tool_response: params.content,
+      is_error: params.isError,
+    },
+  });
+}
+
+async function* yieldHookRecords(
+  records: readonly HookExecutionRecord[],
+): AsyncGenerator<AgentEvent, void, void> {
+  for (const record of records) {
+    yield {
+      type: "hook_result",
+      hookEventName: record.hookEventName,
+      toolUseId: record.toolUseId,
+      toolName: record.toolName,
+      command: record.command,
+      outcome: record.outcome,
+      exitCode: record.exitCode,
+      durationMs: record.durationMs,
+      stdout: record.stdout,
+      stderr: record.stderr,
+    };
+  }
+}
+
+function applyPostHookContent(content: string, hook: HookBatchResult): string {
+  if (hook.blocked !== undefined) {
+    return `PostToolUse hook blocked: ${hook.blocked.reason}`;
+  }
+  const base = hook.updatedOutput ?? content;
+  if (hook.additionalContexts.length === 0) return base;
+  return `${base}\n\n[PostToolUse hook context]\n${hook.additionalContexts.join("\n")}`;
 }
 
 /**

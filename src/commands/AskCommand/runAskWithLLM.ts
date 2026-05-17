@@ -19,6 +19,7 @@ import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
 import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
+import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
@@ -152,6 +153,8 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       autoCompactEnabled: true,
       autoCompactTracking,
       ...(runtimeInstructions !== undefined ? { projectInstructions: runtimeInstructions } : {}),
+      hooks: config.hooks,
+      sessionId: "ask",
     });
 
     for await (const event of generator) {
@@ -180,6 +183,27 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
             process.stderr.write(`[tool] ${event.toolName} failed: ${event.content}\n`);
           } else if (event.toolName === TODO_WRITE_TOOL_NAME) {
             process.stderr.write(`${event.content}\n`);
+          }
+          break;
+        case "hook_result":
+          if (event.outcome === HookExecutionOutcome.BLOCKING) {
+            process.stderr.write(
+              `[hook] ${event.hookEventName}:${event.toolName} blocked (${event.command}): ${formatHookOutput(
+                event.stderr,
+                event.stdout,
+              )}\n`,
+            );
+          } else if (event.outcome === HookExecutionOutcome.NON_BLOCKING_ERROR) {
+            process.stderr.write(
+              `[hook] ${event.hookEventName}:${event.toolName} warning (${event.command}): ${formatHookOutput(
+                event.stderr,
+                event.stdout,
+              )}\n`,
+            );
+          } else if (event.outcome === HookExecutionOutcome.CANCELLED) {
+            process.stderr.write(
+              `[hook] ${event.hookEventName}:${event.toolName} cancelled (${event.command})\n`,
+            );
           }
           break;
         case "done":
@@ -235,6 +259,12 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     await mcpRegistry?.close();
     process.removeListener("SIGINT", onSigint);
   }
+}
+
+function formatHookOutput(stderr: string, stdout: string): string {
+  const output = stderr.trim() || stdout.trim();
+  if (output === "") return "no output";
+  return output.split("\n")[0] ?? output;
 }
 
 /** 把不同错误映射到合适的退出码 + 用户友好的提示。 */
