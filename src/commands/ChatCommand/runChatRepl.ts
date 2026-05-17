@@ -28,6 +28,11 @@ import {
 } from "../../services/compact/autoCompact.ts";
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import {
+  getSkillInstructionsFromCatalog,
+  type LoadedSkill,
+  mergeInstructionBlocks,
+} from "../../services/skills/index.ts";
 import type { Tool } from "../../Tool.ts";
 import type { AgentEvent, ApiUsage } from "../../types/message.ts";
 import type { PermissionMode } from "../../types/permissions.ts";
@@ -70,6 +75,8 @@ export interface RunChatReplParams {
    * 不注入 = 不启用 CLAUDE.md。
    */
   readonly projectInstructions?: string;
+  /** M9：启动时加载好的 skill catalog；每轮按用户输入做自动激活并追加到 system prompt。 */
+  readonly skills?: readonly LoadedSkill[];
   /** M4：是否启用自动 compact，默认 true。配合 autoCompactTracking 才生效。 */
   readonly autoCompactEnabled?: boolean;
   /** M4：自动 compact tracking；不注入则 runChatRepl 自动构造一份。 */
@@ -110,6 +117,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     permissionStore,
     permissionMode,
     projectInstructions,
+    skills,
     costTracker,
   } = params;
   // M4: 自动 compact 默认开启；调用方可通过 autoCompactEnabled=false 关闭
@@ -286,6 +294,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       const renderState = createRenderState();
 
       try {
+        const runtimeInstructions = buildRuntimeInstructions(projectInstructions, skills, input);
         const gen = session.sendTurn(input, {
           config,
           tools: readCurrentTools(),
@@ -298,7 +307,9 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           // M4: 自动 compact + CLAUDE.md 注入
           autoCompactEnabled,
           autoCompactTracking,
-          ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+          ...(runtimeInstructions !== undefined
+            ? { projectInstructions: runtimeInstructions }
+            : {}),
         });
         for await (const event of gen) {
           debugSink.write(event);
@@ -341,6 +352,16 @@ function isApiUsage(value: unknown): value is ApiUsage {
 function printCostSummary(costTracker: CostTracker | undefined, io: ReplIO): void {
   if (costTracker === undefined || !costTracker.hasUsage()) return;
   io.stderr(`${formatChatCostSummary(costTracker.snapshot())}\n`);
+}
+
+function buildRuntimeInstructions(
+  projectInstructions: string | undefined,
+  skills: readonly LoadedSkill[] | undefined,
+  input: string,
+): string | undefined {
+  if (skills === undefined || skills.length === 0) return projectInstructions;
+  const skillContext = getSkillInstructionsFromCatalog({ skills, prompt: input });
+  return mergeInstructionBlocks(projectInstructions, skillContext.instructions);
 }
 
 /** 把 sendTurn 抛出的错误映射为用户可见的一行提示；REPL 不退出。 */

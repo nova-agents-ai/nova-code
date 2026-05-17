@@ -18,6 +18,7 @@ import { costCommand } from "./commands/CostCommand/CostCommand.ts";
 import { helloCommand } from "./commands/HelloCommand/HelloCommand.ts";
 import { initCommand } from "./commands/InitCommand/InitCommand.ts";
 import { mcpCommand } from "./commands/McpCommand/McpCommand.ts";
+import { skillCommand } from "./commands/SkillCommand/SkillCommand.ts";
 import type { CommandDefinition } from "./commands/types.ts";
 
 // 兼容 re-export：历史调用方（如 commands.test.ts）直接从本文件按名引用这些 helper，
@@ -37,6 +38,7 @@ export const builtinCommands: readonly CommandDefinition[] = [
   configCommand,
   initCommand,
   mcpCommand,
+  skillCommand,
 ];
 
 /**

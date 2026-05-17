@@ -39,6 +39,18 @@ export {
   readCostLedgerEntries,
   summarizeCostLedgerEntries,
 } from "./services/cost/index.ts";
+// Skills（M9）
+export type {
+  LoadedSkill,
+  SkillActivation,
+  SkillCatalog,
+  SkillMetadata,
+} from "./services/skills/index.ts";
+export {
+  getSkillInstructionsForPrompt,
+  loadSkillCatalog,
+  selectSkills,
+} from "./services/skills/index.ts";
 // Tool 接口（M1 步骤 1 起搬到顶层 src/Tool.ts）
 export type { Tool, ToolExecutionContext, ToolInputSchema } from "./Tool.ts";
 // 工具系统：注册表 + 内置工具（M1 步骤 1 起搬到顶层 src/tools.ts）

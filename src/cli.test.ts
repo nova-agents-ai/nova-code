@@ -100,6 +100,7 @@ describe("runCli - 顶层选项", () => {
     expect(output).toContain("cost");
     expect(output).toContain("config");
     expect(output).toContain("init");
+    expect(output).toContain("skill");
   });
 });
 

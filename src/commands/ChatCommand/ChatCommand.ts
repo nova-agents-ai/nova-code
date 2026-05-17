@@ -20,6 +20,7 @@ import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
+import { loadSkillCatalog } from "../../services/skills/index.ts";
 import { builtinTools } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "../AskCommand/debugSink.ts";
 import type { CommandDefinition } from "../types.ts";
@@ -132,6 +133,10 @@ export const chatCommand: CommandDefinition = {
 
       // M4: 启动时一次性加载 CLAUDE.md 4 层（不抛错；缺失时 undefined）
       const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+      const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
+      for (const warning of skillCatalog.warnings) {
+        process.stderr.write(`[skill] ${warning}\n`);
+      }
 
       logEvent("tengu_started", {
         command: "chat",
@@ -139,6 +144,7 @@ export const chatCommand: CommandDefinition = {
         resumed: resumeId !== undefined,
         dangerouslySkipPermissions,
         hasProjectInstructions: projectInstructions !== undefined,
+        skillCount: skillCatalog.skills.length,
         mcpToolCount: mcpRegistry.tools.length,
       });
 
@@ -153,6 +159,7 @@ export const chatCommand: CommandDefinition = {
         // --dangerously-skip-permissions → bypassPermissions，否则 default
         permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
         ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+        skills: skillCatalog.skills,
         costTracker,
       });
       await appendChatCostLedgerBestEffort(costTracker, session.meta.sessionId, exitCode);
