@@ -29,7 +29,7 @@ import {
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import {
-  getSkillInstructionsFromCatalog,
+  formatSkillListingInstructions,
   type LoadedSkill,
   mergeInstructionBlocks,
 } from "../../services/skills/index.ts";
@@ -75,7 +75,7 @@ export interface RunChatReplParams {
    * 不注入 = 不启用 CLAUDE.md。
    */
   readonly projectInstructions?: string;
-  /** M9：启动时加载好的 skill catalog；每轮按用户输入做自动激活并追加到 system prompt。 */
+  /** M9：启动时加载好的 skill catalog；按 claude-code 方式只把名称/描述列表追加到 system prompt。 */
   readonly skills?: readonly LoadedSkill[];
   /** M4：是否启用自动 compact，默认 true。配合 autoCompactTracking 才生效。 */
   readonly autoCompactEnabled?: boolean;
@@ -254,38 +254,40 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         phaseRef.current = { kind: "idle" };
       }
 
-      // 斜杠命令优先
+      // 斜杠命令优先；若 /name 命中 skill，则交给模型通过 Skill tool 加载。
       // M4: 为 /compact 这类需要发 LLM 调用的命令准备 chatRuntime；
       // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
-      const slashAbort = new AbortController();
-      phaseRef.current = { kind: "streaming", abort: slashAbort };
-      const currentTools = readCurrentTools();
-      const dispatch = await dispatchSlash(input, {
-        session,
-        io: slashIO,
-        ...(configSource ? { configSource } : {}),
-        ...(permissionStore !== undefined ? { permissionStore } : {}),
-        permissionModeRef,
-        chatRuntime: {
-          config,
-          signal: slashAbort.signal,
-          tools: currentTools,
-          systemPrompt: buildSystemPrompt({
-            toolNames: currentTools.map((tool) => tool.name),
-            ...(projectInstructions !== undefined ? { projectInstructions } : {}),
-          }),
-          ...(llmLogSink !== undefined ? { llmLogSink } : {}),
-          ...(costTracker !== undefined ? { costTracker } : {}),
-        },
-      });
-      // 一旦 dispatch 完成 → 重置 phase 回 idle（无论 dispatch.handled 与否）
-      phaseRef.current = { kind: "idle" };
-      if (dispatch.handled) {
-        if (dispatch.result.action === "exit") {
-          printCostSummary(costTracker, io);
-          return dispatch.result.exitCode ?? 0;
+      if (!isSkillSlashInvocation(input, skills)) {
+        const slashAbort = new AbortController();
+        phaseRef.current = { kind: "streaming", abort: slashAbort };
+        const currentTools = readCurrentTools();
+        const dispatch = await dispatchSlash(input, {
+          session,
+          io: slashIO,
+          ...(configSource ? { configSource } : {}),
+          ...(permissionStore !== undefined ? { permissionStore } : {}),
+          permissionModeRef,
+          chatRuntime: {
+            config,
+            signal: slashAbort.signal,
+            tools: currentTools,
+            systemPrompt: buildSystemPrompt({
+              toolNames: currentTools.map((tool) => tool.name),
+              ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+            }),
+            ...(llmLogSink !== undefined ? { llmLogSink } : {}),
+            ...(costTracker !== undefined ? { costTracker } : {}),
+          },
+        });
+        // 一旦 dispatch 完成 → 重置 phase 回 idle（无论 dispatch.handled 与否）
+        phaseRef.current = { kind: "idle" };
+        if (dispatch.handled) {
+          if (dispatch.result.action === "exit") {
+            printCostSummary(costTracker, io);
+            return dispatch.result.exitCode ?? 0;
+          }
+          continue;
         }
-        continue;
       }
 
       // 走真实 agent loop
@@ -294,7 +296,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       const renderState = createRenderState();
 
       try {
-        const runtimeInstructions = buildRuntimeInstructions(projectInstructions, skills, input);
+        const runtimeInstructions = buildRuntimeInstructions(projectInstructions, skills);
         const gen = session.sendTurn(input, {
           config,
           tools: readCurrentTools(),
@@ -357,11 +359,23 @@ function printCostSummary(costTracker: CostTracker | undefined, io: ReplIO): voi
 function buildRuntimeInstructions(
   projectInstructions: string | undefined,
   skills: readonly LoadedSkill[] | undefined,
-  input: string,
 ): string | undefined {
   if (skills === undefined || skills.length === 0) return projectInstructions;
-  const skillContext = getSkillInstructionsFromCatalog({ skills, prompt: input });
-  return mergeInstructionBlocks(projectInstructions, skillContext.instructions);
+  const listing = formatSkillListingInstructions(skills);
+  return mergeInstructionBlocks(projectInstructions, listing);
+}
+
+function isSkillSlashInvocation(
+  input: string,
+  skills: readonly LoadedSkill[] | undefined,
+): boolean {
+  if (skills === undefined || !input.startsWith("/")) return false;
+  const name = input.slice(1).trim().split(/\s+/)[0] ?? "";
+  if (name === "") return false;
+  const normalized = name.toLowerCase();
+  return skills.some(
+    (skill) => !skill.metadata.disableModelInvocation && skill.name.toLowerCase() === normalized,
+  );
 }
 
 /** 把 sendTurn 抛出的错误映射为用户可见的一行提示；REPL 不退出。 */

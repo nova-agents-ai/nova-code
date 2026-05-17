@@ -3,11 +3,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  formatSkillInstructions,
+  formatSkillListingInstructions,
   loadSkillCatalog,
   parseSkillDocument,
   resolveSkillRoots,
-  selectSkills,
 } from "./index.ts";
 
 let tempDir: string;
@@ -49,20 +48,9 @@ Use this body.
 });
 
 describe("skill catalog loading", () => {
-  test("按 root 加载 SKILL.md 并识别 manual-only", async () => {
+  test("按 root 的直接子目录加载 SKILL.md 并识别 manual-only", async () => {
     const home = join(tempDir, "home");
-    const skillDir = join(home, ".agents", "skills", "gstack");
-    await mkdir(skillDir, { recursive: true });
-    await Bun.write(
-      join(skillDir, "SKILL.md"),
-      `---
-name: gstack
-description: MANUAL TRIGGER ONLY: invoke only when user types /gstack.
----
-# GStack
-Only explicit activation.
-`,
-    );
+    await writeSkill(home, "gstack", "MANUAL TRIGGER ONLY: invoke only when user types /gstack.");
 
     const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
 
@@ -70,6 +58,25 @@ Only explicit activation.
     expect(catalog.skills).toHaveLength(1);
     expect(catalog.skills[0]?.name).toBe("gstack");
     expect(catalog.skills[0]?.metadata.manualOnly).toBe(true);
+  });
+
+  test("不递归扫描嵌套子目录下的 SKILL.md", async () => {
+    const home = join(tempDir, "home");
+    const nestedDir = join(home, ".agents", "skills", "parent", "child");
+    await mkdir(nestedDir, { recursive: true });
+    await Bun.write(
+      join(nestedDir, "SKILL.md"),
+      `---
+name: child
+description: Nested skill should not be loaded.
+---
+# Nested
+`,
+    );
+
+    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
+
+    expect(catalog.skills).toEqual([]);
   });
 
   test("NOVA_SKILL_DIRS 覆盖默认 roots", () => {
@@ -83,34 +90,39 @@ Only explicit activation.
   });
 });
 
-describe("skill matching and prompt", () => {
-  test("manual-only skill 只响应显式 /name 触发", async () => {
-    const home = join(tempDir, "home");
-    await writeSkill(home, "gstack", "MANUAL TRIGGER ONLY: invoke only by /gstack.");
-    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
-
-    expect(selectSkills({ skills: catalog.skills, query: "please use gstack browser" })).toEqual(
-      [],
-    );
-    const explicit = selectSkills({ skills: catalog.skills, query: "/gstack open the page" });
-    expect(explicit[0]?.skill.name).toBe("gstack");
-    expect(explicit[0]?.reason).toBe("explicit");
-  });
-
-  test("关键词激活非 manual-only skill 并格式化 prompt", async () => {
+describe("skill prompt", () => {
+  test("模型可见 prompt 只包含 skill 列表，不包含正文", async () => {
     const home = join(tempDir, "home");
     await writeSkill(home, "java", "Java concurrency review for JVM services.");
     const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
 
-    const activations = selectSkills({
-      skills: catalog.skills,
-      query: "review this Java concurrency code",
-    });
-    const prompt = formatSkillInstructions(activations);
+    const prompt = formatSkillListingInstructions(catalog.skills);
 
-    expect(activations[0]?.skill.name).toBe("java");
-    expect(prompt).toContain("## Skill: java");
-    expect(prompt).toContain("Always check thread safety.");
+    expect(prompt).toContain("The following skills are available");
+    expect(prompt).toContain("- java: Java concurrency review for JVM services.");
+    expect(prompt).not.toContain("Always check thread safety.");
+  });
+
+  test("disable-model-invocation 的 skill 不进入模型可见 listing", async () => {
+    const home = join(tempDir, "home");
+    await writeSkill(home, "java", "Java concurrency review for JVM services.");
+    await writeDisabledSkill(home, "debug", "Debug current session internals.");
+    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
+
+    const prompt = formatSkillListingInstructions(catalog.skills);
+
+    expect(catalog.skills.map((skill) => skill.name)).toEqual(["debug", "java"]);
+    expect(prompt).toContain("- java: Java concurrency review for JVM services.");
+    expect(prompt).not.toContain("debug");
+    expect(prompt).not.toContain("Debug current session internals.");
+  });
+
+  test("只有 disable-model-invocation skill 时不生成 listing", async () => {
+    const home = join(tempDir, "home");
+    await writeDisabledSkill(home, "debug", "Debug current session internals.");
+    const catalog = await loadSkillCatalog({ cwd: tempDir, homeDir: home });
+
+    expect(formatSkillListingInstructions(catalog.skills)).toBeUndefined();
   });
 });
 
@@ -125,6 +137,22 @@ description: ${description}
 ---
 # ${name}
 Always check thread safety.
+`,
+  );
+}
+
+async function writeDisabledSkill(home: string, name: string, description: string): Promise<void> {
+  const dir = join(home, ".agents", "skills", name);
+  await mkdir(dir, { recursive: true });
+  await Bun.write(
+    join(dir, "SKILL.md"),
+    `---
+name: ${name}
+description: ${description}
+disable-model-invocation: true
+---
+# ${name}
+Disabled skill body.
 `,
   );
 }

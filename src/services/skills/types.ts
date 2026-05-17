@@ -6,6 +6,8 @@ export interface SkillMetadata {
   readonly version?: string;
   readonly preambleTier?: number;
   readonly allowedTools?: readonly string[];
+  readonly whenToUse?: string;
+  readonly disableModelInvocation: boolean;
   readonly manualOnly: boolean;
 }
 
@@ -22,20 +24,6 @@ export interface SkillCatalog {
   readonly skills: readonly LoadedSkill[];
   readonly roots: readonly string[];
   readonly warnings: readonly string[];
-}
-
-export type SkillActivationReason = "explicit" | "keyword";
-
-export interface SkillActivation {
-  readonly skill: LoadedSkill;
-  readonly reason: SkillActivationReason;
-  readonly score: number;
-  readonly matchedTerms: readonly string[];
-}
-
-export interface SkillSelectionResult {
-  readonly activations: readonly SkillActivation[];
-  readonly instructions?: string;
 }
 
 export type SkillEnvironment = Readonly<Record<string, string | undefined>>;

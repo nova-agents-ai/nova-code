@@ -1,6 +1,7 @@
 /** M9 Skills 加载器：扫描 skill roots，读取 SKILL.md，并构造可匹配目录。 */
 
-import { stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parseSkillDocument } from "./frontmatter.ts";
@@ -93,20 +94,26 @@ function uniqueRoots(roots: readonly string[]): readonly string[] {
 async function findSkillFiles(root: string, warnings: string[]): Promise<readonly string[]> {
   if (!(await pathExists(root))) return [];
 
-  const files = new Set<string>();
-  const rootSkillFile = join(root, SKILL_FILE_NAME);
-  if (await pathExists(rootSkillFile)) files.add(rootSkillFile);
-
-  const glob = new Bun.Glob(`**/${SKILL_FILE_NAME}`);
+  let entries: Dirent<string>[];
   try {
-    for await (const rel of glob.scan({ cwd: root, absolute: false, onlyFiles: true, dot: true })) {
-      files.add(join(root, rel));
-    }
+    entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
     warnings.push(`failed to scan skills root ${root}: ${describeError(error)}`);
+    return [];
   }
 
-  return [...files].sort((a, b) => a.localeCompare(b));
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    files.push(join(root, entry.name, SKILL_FILE_NAME));
+  }
+
+  const existingFiles: string[] = [];
+  for (const file of files) {
+    if (await pathExists(file)) existingFiles.push(file);
+  }
+
+  return existingFiles.sort((a, b) => a.localeCompare(b));
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -153,22 +160,26 @@ function buildMetadata(
   filePath: string,
   body: string,
 ): SkillMetadata | undefined {
-  const name = asNonEmptyString(frontmatter["name"]) ?? basename(dirname(filePath));
+  const name = basename(dirname(filePath));
   if (!SKILL_NAME_PATTERN.test(name)) return undefined;
 
   const description = asNonEmptyString(frontmatter["description"]) ?? firstNonEmptyLine(body) ?? "";
   const version = asNonEmptyString(frontmatter["version"]);
   const preambleTier = asNumber(frontmatter["preamble-tier"]);
   const allowedTools = asStringArray(frontmatter["allowed-tools"]);
+  const whenToUse = asNonEmptyString(frontmatter["when_to_use"]);
+  const disableModelInvocation = asBoolean(frontmatter["disable-model-invocation"]);
   const manualOnly = isManualOnly(description) || isManualOnly(body);
 
   return {
     name,
     description,
+    disableModelInvocation,
     manualOnly,
     ...(version !== undefined ? { version } : {}),
     ...(preambleTier !== undefined ? { preambleTier } : {}),
     ...(allowedTools !== undefined ? { allowedTools } : {}),
+    ...(whenToUse !== undefined ? { whenToUse } : {}),
   };
 }
 
@@ -183,6 +194,13 @@ function asNumber(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
   const parsed = Number(value.trim());
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function asStringArray(value: unknown): readonly string[] | undefined {

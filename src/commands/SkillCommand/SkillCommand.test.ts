@@ -41,21 +41,11 @@ describe("skill command", () => {
     expect(stdout()).toContain("Prefer checked exceptions guidance.");
   });
 
-  test("match 输出自动激活结果", async () => {
-    const exitCode = await runSkillCommand(
-      ["match", "review", "java", "service"],
-      commandOptions(),
-    );
-
-    expect(exitCode).toBe(0);
-    expect(stdout()).toContain("java\tkeyword");
-  });
-
   test("未知 action 返回 1", async () => {
     const exitCode = await runSkillCommand(["nope"], commandOptions());
 
     expect(exitCode).toBe(1);
-    expect(stderr()).toContain("expected list, show, or match");
+    expect(stderr()).toContain("expected list or show");
   });
 });
 

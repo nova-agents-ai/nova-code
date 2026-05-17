@@ -1,7 +1,7 @@
-/** `nova-code skill`：查看与调试 M9 Skills 加载和自动激活。 */
+/** `nova-code skill`：查看 M9 Skills catalog 与 skill 正文。 */
 
 import type { LoadedSkill, SkillEnvironment } from "../../services/skills/index.ts";
-import { loadSkillCatalog, selectSkills } from "../../services/skills/index.ts";
+import { loadSkillCatalog } from "../../services/skills/index.ts";
 import type { CommandDefinition } from "../types.ts";
 
 interface SkillCommandIO {
@@ -18,9 +18,8 @@ export interface RunSkillCommandOptions {
 
 export const skillCommand: CommandDefinition = {
   name: "skill",
-  description: "查看可用 Skills，并调试按 query 自动激活结果",
-  usage:
-    "nova-code skill list\n" + "nova-code skill show <name>\n" + "nova-code skill match <query...>",
+  description: "查看可用 Skills 与正文",
+  usage: "nova-code skill list\n" + "nova-code skill show <name>",
   run: (args) => runSkillCommand(args),
 };
 
@@ -47,23 +46,19 @@ export async function runSkillCommand(
       return runList(catalog.skills, io);
     case "show":
       return runShow(catalog.skills, action.name, io);
-    case "match":
-      return runMatch(catalog.skills, action.query, io);
   }
 }
 
 type ParsedAction =
   | { readonly ok: true; readonly kind: "list" }
   | { readonly ok: true; readonly kind: "show"; readonly name: string }
-  | { readonly ok: true; readonly kind: "match"; readonly query: string }
   | { readonly ok: false; readonly message: string };
 
 function parseAction(args: readonly string[]): ParsedAction {
   const [kind, first, ...rest] = args;
   if (kind === undefined || kind === "list") return parseList(first, rest);
   if (kind === "show") return parseShow(first, rest);
-  if (kind === "match") return parseMatch(first, rest);
-  return { ok: false, message: "expected list, show, or match" };
+  return { ok: false, message: "expected list or show" };
 }
 
 function parseList(extra: string | undefined, rest: readonly string[]): ParsedAction {
@@ -78,11 +73,6 @@ function parseShow(name: string | undefined, rest: readonly string[]): ParsedAct
     return { ok: false, message: "usage: nova-code skill show <name>" };
   }
   return { ok: true, kind: "show", name };
-}
-
-function parseMatch(first: string | undefined, rest: readonly string[]): ParsedAction {
-  if (first === undefined) return { ok: false, message: "usage: nova-code skill match <query...>" };
-  return { ok: true, kind: "match", query: [first, ...rest].join(" ") };
 }
 
 function runList(skills: readonly LoadedSkill[], io: SkillCommandIO): number {
@@ -103,21 +93,6 @@ function runShow(skills: readonly LoadedSkill[], name: string, io: SkillCommandI
     return 1;
   }
   io.stdout(formatSkillDetails(skill));
-  return 0;
-}
-
-function runMatch(skills: readonly LoadedSkill[], query: string, io: SkillCommandIO): number {
-  const activations = selectSkills({ skills, query });
-  if (activations.length === 0) {
-    io.stdout("No skills matched.\n");
-    return 0;
-  }
-  for (const activation of activations) {
-    const terms = activation.matchedTerms.length > 0 ? activation.matchedTerms.join(",") : "n/a";
-    io.stdout(
-      `${activation.skill.name}\t${activation.reason}\tscore=${activation.score}\t${terms}\n`,
-    );
-  }
   return 0;
 }
 
