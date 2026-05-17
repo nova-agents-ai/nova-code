@@ -12,6 +12,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   RawMessageStreamEvent,
@@ -20,6 +23,7 @@ import type {
 import type { ResolvedConfig } from "./config/config.ts";
 import { AbortError, MaxTurnsExceededError } from "./errors/index.ts";
 import { buildSystemPrompt, runAgentLoop } from "./QueryEngine.ts";
+import { HookCommandType } from "./services/hooks/types.ts";
 import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
 import { PermissionStore } from "./services/permissions/permissionStore.ts";
 import type { Tool } from "./Tool.ts";
@@ -172,6 +176,7 @@ const baseConfig: ResolvedConfig = {
   webProxy: undefined,
   webProxyDomains: [],
   mcpServers: {},
+  hooks: {},
 };
 
 function makeEchoTool(): Tool {
@@ -422,6 +427,129 @@ describe("runAgentLoop - 工具调用循环", () => {
     expect(toolCalls.length).toBe(2);
     expect(toolResults.length).toBe(2);
     expect(toolResults.map((r) => r.content)).toEqual(["echo: first", "echo: second"]);
+  });
+
+  test("PreToolUse hook 可改写工具入参，PostToolUse hook 可改写工具结果", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "nova-query-hooks-"));
+    try {
+      const preScript = join(tempDir, "pre.ts");
+      const postScript = join(tempDir, "post.ts");
+      await Bun.write(
+        preScript,
+        `const input = await new Response(Bun.stdin.stream()).json();
+console.log(JSON.stringify({ hookSpecificOutput: {
+  hookEventName: "PreToolUse",
+  updatedInput: { message: input.tool_input.message + "-pre" }
+}}));
+`,
+      );
+      await Bun.write(
+        postScript,
+        `const input = await new Response(Bun.stdin.stream()).json();
+console.log(JSON.stringify({ hookSpecificOutput: {
+  hookEventName: "PostToolUse",
+  updatedOutput: input.tool_response + "-post"
+}}));
+`,
+      );
+
+      const { client } = makeFakeClient([
+        {
+          textChunks: [],
+          toolUses: [{ id: "tu_1", name: "echo", input: { message: "x" } }],
+          stopReason: "tool_use",
+        },
+        { textChunks: ["done"], stopReason: "end_turn" },
+      ]);
+
+      const events = await collectEvents(
+        runAgentLoop({
+          config: baseConfig,
+          userPrompt: "test hooks",
+          tools: [makeEchoTool()],
+          client,
+          cwd: tempDir,
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "echo",
+                hooks: [{ type: HookCommandType.COMMAND, command: `bun run ${preScript}` }],
+              },
+            ],
+            PostToolUse: [
+              {
+                matcher: "echo",
+                hooks: [{ type: HookCommandType.COMMAND, command: `bun run ${postScript}` }],
+              },
+            ],
+          },
+        }),
+      );
+
+      const hookResults = events.filter((event) => event.type === "hook_result");
+      expect(hookResults.length).toBe(2);
+      const toolResult = events.find(
+        (event): event is Extract<AgentEvent, { type: "tool_result" }> =>
+          event.type === "tool_result",
+      );
+      expect(toolResult?.content).toBe("echo: x-pre-post");
+      expect(toolResult?.isError).toBe(false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("PreToolUse hook 阻断时不执行工具，并返回 is_error tool_result", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "nova-query-hooks-block-"));
+    try {
+      const preScript = join(tempDir, "pre-block.ts");
+      await Bun.write(preScript, `console.error("blocked before execute"); process.exit(2);\n`);
+      const { client } = makeFakeClient([
+        {
+          textChunks: [],
+          toolUses: [{ id: "tu_1", name: "echo", input: { message: "x" } }],
+          stopReason: "tool_use",
+        },
+        { textChunks: ["done"], stopReason: "end_turn" },
+      ]);
+      const executed: string[] = [];
+      const tool: Tool = {
+        ...makeEchoTool(),
+        execute: () => {
+          executed.push("called");
+          return "should not happen";
+        },
+      };
+
+      const events = await collectEvents(
+        runAgentLoop({
+          config: baseConfig,
+          userPrompt: "test hook block",
+          tools: [tool],
+          client,
+          cwd: tempDir,
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "echo",
+                hooks: [{ type: HookCommandType.COMMAND, command: `bun run ${preScript}` }],
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(executed).toEqual([]);
+      const toolResult = events.find(
+        (event): event is Extract<AgentEvent, { type: "tool_result" }> =>
+          event.type === "tool_result",
+      );
+      expect(toolResult?.isError).toBe(true);
+      expect(toolResult?.content).toContain("Hook blocked");
+      expect(toolResult?.content).toContain("blocked before execute");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

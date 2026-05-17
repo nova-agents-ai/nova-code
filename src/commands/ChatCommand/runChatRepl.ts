@@ -324,6 +324,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           ...(runtimeInstructions !== undefined
             ? { projectInstructions: runtimeInstructions }
             : {}),
+          hooks: config.hooks,
         });
         for await (const event of gen) {
           debugSink.write(event);

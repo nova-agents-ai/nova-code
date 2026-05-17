@@ -102,6 +102,14 @@ describe("config - loadPersistedConfig", () => {
               timeoutMs: 5000,
             },
           },
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: "bun run .nova-code/hooks/pre.ts" }],
+              },
+            ],
+          },
         },
         { homeDir },
       );
@@ -124,6 +132,14 @@ describe("config - loadPersistedConfig", () => {
             headers: { Authorization: `Bearer \${MCP_TOKEN}` },
             timeoutMs: 5000,
           },
+        },
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "bun run .nova-code/hooks/pre.ts" }],
+            },
+          ],
         },
       });
     } finally {
@@ -198,6 +214,36 @@ describe("config - loadPersistedConfig", () => {
     }
   });
 
+  test("hooks 校验事件名、matcher 与 command hook 字段", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      const path = getConfigFilePath({ homeDir });
+      await Bun.write(path, JSON.stringify({ hooks: { Unknown: [] } }));
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/unsupported event/);
+
+      await Bun.write(path, JSON.stringify({ hooks: { PreToolUse: [{ hooks: [] }] } }));
+      await expect(loadPersistedConfig({ homeDir })).resolves.toEqual({
+        hooks: { PreToolUse: [{ hooks: [] }] },
+      });
+
+      await Bun.write(
+        path,
+        JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "x" }] }] } }),
+      );
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/type/);
+
+      await Bun.write(
+        path,
+        JSON.stringify({
+          hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "" }] }] },
+        }),
+      );
+      await expect(loadPersistedConfig({ homeDir })).rejects.toThrow(/command/);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("顶层不是对象时抛 ConfigError", async () => {
     const { homeDir, cleanup } = await makeTempHome();
     try {
@@ -237,6 +283,7 @@ describe("config - resolveConfig", () => {
     expect(result.webProxy).toBe("https://env-proxy.example:8443");
     expect(result.webProxyDomains).toEqual(["env.example", "*.blocked.test"]);
     expect(result.mcpServers).toEqual({});
+    expect(result.hooks).toEqual({});
   });
 
   test("配置文件值生效（无对应 env）", () => {
@@ -259,6 +306,7 @@ describe("config - resolveConfig", () => {
     expect(result.webProxy).toBe("http://web-proxy.example:8080");
     expect(result.webProxyDomains).toEqual(["example.com"]);
     expect(result.mcpServers).toEqual({ git: { command: "uvx", args: ["mcp-server-git"] } });
+    expect(result.hooks).toEqual({});
   });
 
   test("缺省值在 persisted 与 env 都没设时生效", () => {
@@ -270,6 +318,7 @@ describe("config - resolveConfig", () => {
     expect(result.webProxy).toBeUndefined();
     expect(result.webProxyDomains).toEqual([]);
     expect(result.mcpServers).toEqual({});
+    expect(result.hooks).toEqual({});
   });
 });
 

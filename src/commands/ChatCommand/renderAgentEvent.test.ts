@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 
+import { HookEventName, HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { type AgentEvent, AgentStopReasonEnum, MessageRoleEnum } from "../../types/message.ts";
 import {
   createRenderState,
@@ -326,6 +327,92 @@ describe("renderAgentEvent", () => {
     );
 
     expect(err).toEqual(["[permission] allowed & saved to session: Bash\n"]);
+  });
+
+  // ── M10 hook 事件渲染 ─────────────────────────────────────────────────
+  test("hook_result: success 默认静默", () => {
+    const { io, out, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "hook_result",
+        hookEventName: HookEventName.PRE_TOOL_USE,
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        command: "bun run hooks/pre.ts",
+        outcome: HookExecutionOutcome.SUCCESS,
+        exitCode: 0,
+        durationMs: 12,
+        stdout: "",
+        stderr: "",
+      },
+      io,
+      state,
+    );
+
+    expect(out).toEqual([]);
+    expect(err).toEqual([]);
+  });
+
+  test("hook_result: blocking / warning / cancelled 会输出 stderr", () => {
+    const { io, err } = makeIO();
+    const state = createRenderState();
+
+    renderAgentEvent(
+      {
+        type: "hook_result",
+        hookEventName: HookEventName.PRE_TOOL_USE,
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        command: "bun run hooks/pre.ts",
+        outcome: HookExecutionOutcome.BLOCKING,
+        exitCode: 2,
+        durationMs: 12,
+        stdout: "",
+        stderr: "blocked by policy\nsecond line",
+      },
+      io,
+      state,
+    );
+    renderAgentEvent(
+      {
+        type: "hook_result",
+        hookEventName: HookEventName.POST_TOOL_USE,
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        command: "bun run hooks/post.ts",
+        outcome: HookExecutionOutcome.NON_BLOCKING_ERROR,
+        exitCode: 1,
+        durationMs: 12,
+        stdout: "plain stdout",
+        stderr: "",
+      },
+      io,
+      state,
+    );
+    renderAgentEvent(
+      {
+        type: "hook_result",
+        hookEventName: HookEventName.POST_TOOL_USE,
+        toolUseId: "tu_1",
+        toolName: "Bash",
+        command: "bun run hooks/post.ts",
+        outcome: HookExecutionOutcome.CANCELLED,
+        exitCode: undefined,
+        durationMs: 12,
+        stdout: "",
+        stderr: "",
+      },
+      io,
+      state,
+    );
+
+    expect(err.join("")).toContain("[hook] PreToolUse:Bash blocked");
+    expect(err.join("")).toContain("blocked by policy");
+    expect(err.join("")).toContain("[hook] PostToolUse:Bash warning");
+    expect(err.join("")).toContain("plain stdout");
+    expect(err.join("")).toContain("[hook] PostToolUse:Bash cancelled");
   });
 
   // ── M4 compact 事件渲染 ────────────────────────────────────────────────

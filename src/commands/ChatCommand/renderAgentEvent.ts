@@ -14,6 +14,7 @@
  *     覆盖 claude-code 风格的"一次 turn 内先文字后工具"的常见序列
  */
 
+import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
 import type { AgentEvent } from "../../types/message.ts";
 
@@ -69,6 +70,25 @@ export function renderAgentEvent(event: AgentEvent, io: ReplIO, state: RenderSta
         io.stderr(`${event.content}\n`);
       }
       break;
+    case "hook_result":
+      if (event.outcome === HookExecutionOutcome.BLOCKING) {
+        io.stderr(
+          `[hook] ${event.hookEventName}:${event.toolName} blocked (${event.command}): ${formatHookOutput(
+            event.stderr,
+            event.stdout,
+          )}\n`,
+        );
+      } else if (event.outcome === HookExecutionOutcome.NON_BLOCKING_ERROR) {
+        io.stderr(
+          `[hook] ${event.hookEventName}:${event.toolName} warning (${event.command}): ${formatHookOutput(
+            event.stderr,
+            event.stdout,
+          )}\n`,
+        );
+      } else if (event.outcome === HookExecutionOutcome.CANCELLED) {
+        io.stderr(`[hook] ${event.hookEventName}:${event.toolName} cancelled (${event.command})\n`);
+      }
+      break;
     case "done":
       // 末尾补一个换行，让 shell 提示符（或下一轮 prompt）另起一行
       io.stdout("\n");
@@ -116,4 +136,10 @@ export function renderAgentEvent(event: AgentEvent, io: ReplIO, state: RenderSta
       }
       break;
   }
+}
+
+function formatHookOutput(stderr: string, stdout: string): string {
+  const output = stderr.trim() || stdout.trim();
+  if (output === "") return "no output";
+  return output.split("\n")[0] ?? output;
 }
