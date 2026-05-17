@@ -58,7 +58,7 @@ disable-model-invocation: true
 
 ---
 
-设置后该 skill 仍可通过 `nova-code skill list/show` 查看，但不会进入 ask/chat 的模型可见 listing，也不会注册为 `Skill` tool 可调用项。
+设置后该 skill 仍可通过 `nova-code skill list/show` 查看，也仍可由用户直接输入 `/skill-name args` 显式调用；但它不会进入 ask/chat 的模型可见 listing，也不会注册为 `Skill` tool 可调用项。若需要禁止用户直接 slash 调用，额外设置 `user-invocable: false`。
 
 ---
 
@@ -75,7 +75,7 @@ nova-code skill show java
 java    Java JVM backend and concurrency review skill.    /Users/me/.agents/skills/java/SKILL.md
 ```
 
-`show` 会输出 skill 元数据、路径与完整正文，适合检查当前加载到的 `SKILL.md` 是否符合预期。M9 不再提供 `match` 子命令；普通语义选择与 `/name` 这类显式表达都在 ask/chat 运行时由模型基于 listing 和 `Skill` tool 完成。
+`show` 会输出 skill 元数据、model/user invocable 状态、路径与完整正文，适合检查当前加载到的 `SKILL.md` 是否符合预期。M9 不再提供 `match` 子命令；普通语义选择由模型基于 listing 和 `Skill` tool 完成，`/name args` 则由本地 slash skill expansion 直接加载该 skill body。
 
 ---
 
@@ -97,10 +97,11 @@ nova-code chat
 
 行为说明：
 
-- ask 每次加载 skill catalog，并把 skill listing 加入 system prompt；
+- ask 每次加载 skill catalog，并把 model-invocable skill listing 加入 system prompt；
 - chat 启动时加载 skill catalog，每轮复用同一 listing；
 - system prompt 只包含 skill 名称/描述，不包含完整正文；
 - 模型认为相关时调用 `Skill` tool，完整 `SKILL.md` body 才作为 tool result 返回；
+- 用户直接输入 `/name args` 时，本地会直接加载对应 `SKILL.md` body，并把 `$ARGUMENTS` 替换为 args；
 - skill 注入不改变工具权限，Bash/FileWrite/FileEdit 仍按 M3 权限系统走。
 
 ---

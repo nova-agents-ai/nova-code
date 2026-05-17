@@ -32,6 +32,7 @@ import {
   formatSkillListingInstructions,
   type LoadedSkill,
   mergeInstructionBlocks,
+  resolveSkillSlashInvocation,
 } from "../../services/skills/index.ts";
 import type { Tool } from "../../Tool.ts";
 import type { AgentEvent, ApiUsage } from "../../types/message.ts";
@@ -254,10 +255,18 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         phaseRef.current = { kind: "idle" };
       }
 
-      // 斜杠命令优先；若 /name 命中 skill，则交给模型通过 Skill tool 加载。
+      // 斜杠命令优先；若 /name 命中 user-invocable skill，则本地展开 skill body，
+      // 作为本轮 user prompt 交给模型。disable-model-invocation 只禁止模型经 Skill tool 调用，
+      // 不禁止用户显式 slash 调用。
+      const skillSlashInvocation = resolveSkillSlashInvocation(input, skills);
+      if (skillSlashInvocation?.kind === "blocked") {
+        io.stderr(`[skill] ${skillSlashInvocation.message}\n`);
+        continue;
+      }
+
       // M4: 为 /compact 这类需要发 LLM 调用的命令准备 chatRuntime；
       // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
-      if (!isSkillSlashInvocation(input, skills)) {
+      if (skillSlashInvocation === undefined) {
         const slashAbort = new AbortController();
         phaseRef.current = { kind: "streaming", abort: slashAbort };
         const currentTools = readCurrentTools();
@@ -290,6 +299,9 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         }
       }
 
+      const turnInput =
+        skillSlashInvocation?.kind === "invoke" ? skillSlashInvocation.prompt : input;
+
       // 走真实 agent loop
       const abortController = new AbortController();
       phaseRef.current = { kind: "streaming", abort: abortController };
@@ -297,7 +309,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
 
       try {
         const runtimeInstructions = buildRuntimeInstructions(projectInstructions, skills);
-        const gen = session.sendTurn(input, {
+        const gen = session.sendTurn(turnInput, {
           config,
           tools: readCurrentTools(),
           signal: abortController.signal,
@@ -363,19 +375,6 @@ function buildRuntimeInstructions(
   if (skills === undefined || skills.length === 0) return projectInstructions;
   const listing = formatSkillListingInstructions(skills);
   return mergeInstructionBlocks(projectInstructions, listing);
-}
-
-function isSkillSlashInvocation(
-  input: string,
-  skills: readonly LoadedSkill[] | undefined,
-): boolean {
-  if (skills === undefined || !input.startsWith("/")) return false;
-  const name = input.slice(1).trim().split(/\s+/)[0] ?? "";
-  if (name === "") return false;
-  const normalized = name.toLowerCase();
-  return skills.some(
-    (skill) => !skill.metadata.disableModelInvocation && skill.name.toLowerCase() === normalized,
-  );
 }
 
 /** 把 sendTurn 抛出的错误映射为用户可见的一行提示；REPL 不退出。 */

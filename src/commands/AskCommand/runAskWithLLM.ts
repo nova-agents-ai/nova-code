@@ -26,6 +26,7 @@ import {
   formatSkillListingInstructions,
   loadSkillCatalog,
   mergeInstructionBlocks,
+  resolveSkillSlashInvocation,
 } from "../../services/skills/index.ts";
 import { TODO_WRITE_TOOL_NAME } from "../../tools/TodoWriteTool/constants.ts";
 import { builtinTools, createSkillTool } from "../../tools.ts";
@@ -92,6 +93,14 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     for (const warning of skillCatalog.warnings) {
       process.stderr.write(`[skill] ${warning}\n`);
     }
+    const skillSlashInvocation = resolveSkillSlashInvocation(question, skillCatalog.skills);
+    if (skillSlashInvocation?.kind === "blocked") {
+      process.stderr.write(`ask: ${skillSlashInvocation.message}\n`);
+      return 1;
+    }
+    const userPrompt =
+      skillSlashInvocation?.kind === "invoke" ? skillSlashInvocation.prompt : question;
+
     const skillListingInstructions = formatSkillListingInstructions(skillCatalog.skills);
     const runtimeInstructions = mergeInstructionBlocks(
       projectInstructions,
@@ -127,7 +136,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
 
     const generator = runAgentLoop({
       config,
-      userPrompt: question,
+      userPrompt,
       tools,
       signal: abortController.signal,
       llmLogSink: options.debug ? llmLogSink : undefined,

@@ -12,6 +12,7 @@ const javaSkill: LoadedSkill = {
     name: "java",
     description: "Java JVM backend skill.",
     disableModelInvocation: false,
+    userInvocable: true,
     manualOnly: false,
   },
 };

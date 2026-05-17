@@ -8,6 +8,7 @@ export interface SkillMetadata {
   readonly allowedTools?: readonly string[];
   readonly whenToUse?: string;
   readonly disableModelInvocation: boolean;
+  readonly userInvocable: boolean;
   readonly manualOnly: boolean;
 }
 

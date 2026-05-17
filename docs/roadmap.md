@@ -265,12 +265,12 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 **机会**：后续可在 claude-code 的模型语义选择基础上增加可观测的 skill 调用评测与安装/升级能力。
 
 **交付摘要**：
-- 新增 `src/services/skills/`（frontmatter 子集解析 / skill roots 发现 / catalog loader / model-facing listing 与 body formatter）
+- 新增 `src/services/skills/`（frontmatter 子集解析 / skill roots 发现 / catalog loader / model-facing listing / Skill tool 与 slash skill body formatter）
 - 默认扫描 `<cwd>/.nova-code/skills`、`~/.nova-code/skills`、`~/.agents/skills`；每个 root 只加载直接子目录 `<name>/SKILL.md`；支持 `NOVA_DISABLE_SKILLS=1` 禁用、`NOVA_SKILL_DIRS=/a,/b` 覆盖 roots
-- ask/chat 复用 `projectInstructions` 通道只注入 skill 名称/描述列表；完整 body 由新增 `Skill` tool 在模型选择后加载
+- ask/chat 复用 `projectInstructions` 通道只注入 model-invocable skill 名称/描述列表；完整 body 由新增 `Skill` tool 在模型选择后加载，或由用户 `/name args` 显式调用时本地展开
 - 新增 `nova-code skill list|show`，用于本地查看 skill 与正文；普通语义匹配交给 LLM + `Skill` tool
-- `disable-model-invocation: true` 会把 skill 排除出模型可见 listing 与 `Skill` tool 可调用集合
-- 测试：新增 parser/loader/prompt 单测、SkillTool 单测、SkillCommand 单测、`m9-e2e-skills` 子进程 listing/body 验证
+- `disable-model-invocation: true` 会把 skill 排除出模型可见 listing 与 `Skill` tool 可调用集合，但仍允许用户 slash 显式调用；`user-invocable: false` 则禁止用户 slash 调用
+- 测试：新增 parser/loader/prompt/slash 单测、SkillTool 单测、SkillCommand 单测、`m9-e2e-skills` 子进程 listing/body/slash 展开验证
 - 详见 `docs/design/M9-skills.md`、使用手册 `docs/manual/M9-usage-guide.md`、实现架构 `docs/architecture/M9-architecture.md`
 
 ### M10 — Hooks 系统
@@ -512,7 +512,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
-- **v2.13**（2026-05-17）：M9 Skills 系统落地并对齐 claude-code 当前机制。新增 `src/services/skills` 与 `Skill` tool，支持 `~/.agents/skills/<name>/SKILL.md` 直接子目录形态的 frontmatter + body 加载；ask/chat 只注入 skill 名称/描述 listing，完整 body 由模型语义选择后通过 `Skill` tool 加载；`skill` CLI 保留 `list/show`，不再提供本地字符匹配 `match` 子命令；支持 `disable-model-invocation`、`NOVA_DISABLE_SKILLS` 与 `NOVA_SKILL_DIRS`；新增 M9 设计文档 / 使用手册 / 架构快照；全量 692 tests 通过。
+- **v2.13**（2026-05-17）：M9 Skills 系统落地并对齐 claude-code 当前机制。新增 `src/services/skills` 与 `Skill` tool，支持 `~/.agents/skills/<name>/SKILL.md` 直接子目录形态的 frontmatter + body 加载；ask/chat 只注入 skill 名称/描述 listing，完整 body 由模型语义选择后通过 `Skill` tool 加载，或由用户 `/name args` 显式调用时本地展开；`skill` CLI 保留 `list/show`，不再提供本地字符匹配 `match` 子命令；支持 `disable-model-invocation`、`user-invocable`、`NOVA_DISABLE_SKILLS` 与 `NOVA_SKILL_DIRS`；新增 M9 设计文档 / 使用手册 / 架构快照；全量 695 tests 通过。
 - **v2.12**（2026-05-16）：M8.1 MCP HTTP/refresh 落地。新增 `McpStreamableHttpClient`，支持 Streamable HTTP `POST` JSON response / `POST` SSE response / 初始化后 `GET` SSE notification；`mcpServers` 支持 `type: "http"`、`url`、`headers` 且 `config get` 对 headers 脱敏；新增 `nova-code mcp add-http`；stdio 与 HTTP client 均可分发 `notifications/tools/list_changed`，registry 会重新 `tools/list` 并刷新 `MCP__server__tool` bridge，chat 下一轮读取最新工具；新增 M8.1 设计文档 / 使用手册 / 架构快照；全量 678 tests 通过。
 - **v2.11**（2026-05-15）：M8 MCP 客户端协议落地。新增 `services/mcp` 最小 stdio JSON-RPC client 与 MCP Tool bridge；`PersistedConfig` 新增 `mcpServers`，`nova-code mcp list|add|remove|tools` 管理 server 配置；ask/chat 启动时将 `builtinTools + MCP__server__tool` 动态工具传入 QueryEngine；MCP 工具默认走 M3 权限审批，可信 server 可设 `autoApprove=true`；新增 echo fixture、MCP 单测与 `m8-e2e-mcp`；新增 M8 设计文档 / 使用手册 / 架构快照；全量 673 tests 通过。
 - **v2.10**（2026-05-15）：M7.1 Web proxy routing 落地。`PersistedConfig` / `config get|set` 新增 `webProxy` 与 `webProxyDomains`；WebFetch / WebSearch 输入新增 `use_proxy`，允许模型在判断目标站点需要代理时请求使用用户配置的 HTTP(S) proxy；`webProxyConfig.ts` 合并配置文件与环境变量，按域名后缀或 LLM request 决定是否传 Bun `fetch` 的 `proxy` 选项；新增代理路由单测与真实本地 proxy fetch 测试；全量 663 tests 通过。

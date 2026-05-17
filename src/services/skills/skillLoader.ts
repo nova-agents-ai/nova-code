@@ -169,12 +169,14 @@ function buildMetadata(
   const allowedTools = asStringArray(frontmatter["allowed-tools"]);
   const whenToUse = asNonEmptyString(frontmatter["when_to_use"]);
   const disableModelInvocation = asBoolean(frontmatter["disable-model-invocation"]);
+  const userInvocable = asBoolean(frontmatter["user-invocable"], true);
   const manualOnly = isManualOnly(description) || isManualOnly(body);
 
   return {
     name,
     description,
     disableModelInvocation,
+    userInvocable,
     manualOnly,
     ...(version !== undefined ? { version } : {}),
     ...(preambleTier !== undefined ? { preambleTier } : {}),
@@ -196,11 +198,11 @@ function asNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function asBoolean(value: unknown): boolean {
+function asBoolean(value: unknown, defaultValue = false): boolean {
+  if (value === undefined) return defaultValue;
   if (typeof value === "boolean") return value;
   if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+  return value.trim() === "true";
 }
 
 function asStringArray(value: unknown): readonly string[] | undefined {
