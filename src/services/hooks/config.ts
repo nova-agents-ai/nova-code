@@ -9,7 +9,11 @@ import {
   type HooksConfig,
 } from "./types.ts";
 
-const SUPPORTED_HOOK_EVENTS = [HookEventName.PRE_TOOL_USE, HookEventName.POST_TOOL_USE] as const;
+const SUPPORTED_HOOK_EVENTS = [
+  HookEventName.PRE_TOOL_USE,
+  HookEventName.POST_TOOL_USE,
+  HookEventName.INSTRUCTIONS_LOADED,
+] as const;
 
 /** Validate unknown JSON into the M10 HooksConfig shape. */
 export function validateHooksConfig(value: unknown, path: string): HooksConfig {

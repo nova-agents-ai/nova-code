@@ -22,7 +22,7 @@ import { createAutoCompactTrackingState } from "../../services/compact/autoCompa
 import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
-import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
+import { createProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import {
   formatSkillListingInstructions,
   loadSkillCatalog,
@@ -88,8 +88,13 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     const permissionProvider = createHeadlessPermissionProvider({
       stderr: (t) => process.stderr.write(t),
     });
-    // M4: 启动时一次性加载 CLAUDE.md（4 层）+ 准备 autoCompact tracking
-    const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+    // M4/M12: 启动时加载 CLAUDE.md + eager rules；path-scoped rules 由 runtime 延迟激活。
+    const projectInstructionsRuntime = await createProjectInstructionsRuntime({
+      cwd: process.cwd(),
+      hooks: config.hooks,
+      sessionId: "ask",
+      signal: abortController.signal,
+    });
     const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
     for (const warning of skillCatalog.warnings) {
       process.stderr.write(`[skill] ${warning}\n`);
@@ -103,10 +108,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       skillSlashInvocation?.kind === "invoke" ? skillSlashInvocation.prompt : question;
 
     const skillListingInstructions = formatSkillListingInstructions(skillCatalog.skills);
-    const runtimeInstructions = mergeInstructionBlocks(
-      projectInstructions,
-      skillListingInstructions,
-    );
+    const runtimeInstructions = mergeInstructionBlocks(skillListingInstructions);
     const skillTool = createSkillTool(skillCatalog.skills);
     const tools = [
       ...builtinTools,
@@ -118,7 +120,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       command: "ask",
       model: config.model,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
-      hasProjectInstructions: projectInstructions !== undefined,
+      hasProjectInstructions: projectInstructionsRuntime.getInstructions() !== undefined,
       skillCount: skillCatalog.skills.length,
       skillNames: skillCatalog.skills.map((skill) => skill.name).join(","),
       mcpToolCount: mcpRegistry.tools.length,
@@ -149,10 +151,11 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       permissionStore,
       permissionProvider,
       cwd: process.cwd(),
-      // M4: 默认开启 auto-compact 与 CLAUDE.md 注入
+      // M4/M12: 默认开启 auto-compact，并注入项目指令 runtime 与 skill listing。
       autoCompactEnabled: true,
       autoCompactTracking,
       ...(runtimeInstructions !== undefined ? { projectInstructions: runtimeInstructions } : {}),
+      projectInstructionsRuntime,
       hooks: config.hooks,
       sessionId: "ask",
     });

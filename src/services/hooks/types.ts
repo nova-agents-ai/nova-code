@@ -1,9 +1,10 @@
 /** M10 Hooks 系统的领域类型。 */
 
-/** 当前 M10 落地的 hooks 事件子集。 */
+/** 当前落地的 hooks 事件子集。 */
 export enum HookEventName {
   PRE_TOOL_USE = "PreToolUse",
   POST_TOOL_USE = "PostToolUse",
+  INSTRUCTIONS_LOADED = "InstructionsLoaded",
 }
 
 /** M10 仅支持 command hook；prompt/http/agent 留给后续 milestone。 */
@@ -38,6 +39,15 @@ interface BaseHookInput {
   readonly cwd: string;
 }
 
+export type InstructionsLoadReason =
+  | "session_start"
+  | "nested_traversal"
+  | "path_glob_match"
+  | "include"
+  | "compact";
+
+export type InstructionsMemoryType = "Managed" | "User" | "Project" | "Local";
+
 /** PreToolUse hook stdin JSON。 */
 export interface PreToolUseHookInput extends BaseHookInput {
   readonly hook_event_name: HookEventName.PRE_TOOL_USE;
@@ -56,8 +66,19 @@ export interface PostToolUseHookInput extends BaseHookInput {
   readonly is_error: boolean;
 }
 
+/** InstructionsLoaded hook stdin JSON。 */
+export interface InstructionsLoadedHookInput extends BaseHookInput {
+  readonly hook_event_name: HookEventName.INSTRUCTIONS_LOADED;
+  readonly file_path: string;
+  readonly memory_type: InstructionsMemoryType;
+  readonly load_reason: InstructionsLoadReason;
+  readonly globs?: readonly string[];
+  readonly trigger_file_path?: string;
+  readonly parent_file_path?: string;
+}
+
 /** executeHookBatch 可接收的事件输入。 */
-export type HookInput = PreToolUseHookInput | PostToolUseHookInput;
+export type HookInput = PreToolUseHookInput | PostToolUseHookInput | InstructionsLoadedHookInput;
 
 /** command hook 的最终执行状态。 */
 export enum HookExecutionOutcome {

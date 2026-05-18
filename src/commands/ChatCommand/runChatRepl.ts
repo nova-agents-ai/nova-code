@@ -28,6 +28,7 @@ import {
 } from "../../services/compact/autoCompact.ts";
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import type { ProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import {
   formatSkillListingInstructions,
   type LoadedSkill,
@@ -71,11 +72,10 @@ export interface RunChatReplParams {
   readonly permissionStore?: PermissionStore;
   /** 可选：权限模式，默认 "default"。 */
   readonly permissionMode?: PermissionMode;
-  /**
-   * M4：CLAUDE.md 4 层加载结果，启动时一次性加载。注入后追加到 system prompt 末尾。
-   * 不注入 = 不启用 CLAUDE.md。
-   */
+  /** 额外静态 system instruction block；M12 项目指令通常由 projectInstructionsRuntime 提供。 */
   readonly projectInstructions?: string;
+  /** M12：持有 eager + path-scoped .claude/rules 状态。 */
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   /** M9：启动时加载好的 skill catalog；按 claude-code 方式只把名称/描述列表追加到 system prompt。 */
   readonly skills?: readonly LoadedSkill[];
   /** M4：是否启用自动 compact，默认 true。配合 autoCompactTracking 才生效。 */
@@ -118,6 +118,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     permissionStore,
     permissionMode,
     projectInstructions,
+    projectInstructionsRuntime,
     skills,
     costTracker,
   } = params;
@@ -270,6 +271,11 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         const slashAbort = new AbortController();
         phaseRef.current = { kind: "streaming", abort: slashAbort };
         const currentTools = readCurrentTools();
+        const slashInstructions = buildRuntimeInstructions({
+          projectInstructions,
+          projectInstructionsRuntime,
+          skills,
+        });
         const dispatch = await dispatchSlash(input, {
           session,
           io: slashIO,
@@ -282,7 +288,9 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
             tools: currentTools,
             systemPrompt: buildSystemPrompt({
               toolNames: currentTools.map((tool) => tool.name),
-              ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+              ...(slashInstructions !== undefined
+                ? { projectInstructions: slashInstructions }
+                : {}),
             }),
             ...(llmLogSink !== undefined ? { llmLogSink } : {}),
             ...(costTracker !== undefined ? { costTracker } : {}),
@@ -308,7 +316,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       const renderState = createRenderState();
 
       try {
-        const runtimeInstructions = buildRuntimeInstructions(projectInstructions, skills);
+        const runtimeInstructions = buildRuntimeInstructions({ projectInstructions, skills });
         const gen = session.sendTurn(turnInput, {
           config,
           tools: readCurrentTools(),
@@ -318,12 +326,13 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           ...(permissionStore !== undefined ? { permissionStore } : {}),
           ...(permissionProvider !== undefined ? { permissionProvider } : {}),
           cwd: process.cwd(),
-          // M4: 自动 compact + CLAUDE.md 注入
+          // M4/M12: 自动 compact + 项目指令 runtime + skill listing 注入。
           autoCompactEnabled,
           autoCompactTracking,
           ...(runtimeInstructions !== undefined
             ? { projectInstructions: runtimeInstructions }
             : {}),
+          ...(projectInstructionsRuntime !== undefined ? { projectInstructionsRuntime } : {}),
           hooks: config.hooks,
         });
         for await (const event of gen) {
@@ -369,12 +378,17 @@ function printCostSummary(costTracker: CostTracker | undefined, io: ReplIO): voi
   io.stderr(`${formatChatCostSummary(costTracker.snapshot())}\n`);
 }
 
-function buildRuntimeInstructions(
-  projectInstructions: string | undefined,
-  skills: readonly LoadedSkill[] | undefined,
-): string | undefined {
-  if (skills === undefined || skills.length === 0) return projectInstructions;
-  const listing = formatSkillListingInstructions(skills);
+function buildRuntimeInstructions(params: {
+  readonly projectInstructions?: string;
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
+  readonly skills?: readonly LoadedSkill[];
+}): string | undefined {
+  const projectInstructions = mergeInstructionBlocks(
+    params.projectInstructionsRuntime?.getInstructions(),
+    params.projectInstructions,
+  );
+  if (params.skills === undefined || params.skills.length === 0) return projectInstructions;
+  const listing = formatSkillListingInstructions(params.skills);
   return mergeInstructionBlocks(projectInstructions, listing);
 }
 

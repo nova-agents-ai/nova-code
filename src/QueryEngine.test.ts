@@ -26,6 +26,7 @@ import { buildSystemPrompt, runAgentLoop } from "./QueryEngine.ts";
 import { HookCommandType } from "./services/hooks/types.ts";
 import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
 import { PermissionStore } from "./services/permissions/permissionStore.ts";
+import { createProjectInstructionsRuntime } from "./services/projectInstructions/index.ts";
 import type { Tool } from "./Tool.ts";
 import { AgentTool } from "./tools/AgentTool/AgentTool.ts";
 import { AGENT_TOOL_NAME } from "./tools/AgentTool/constants.ts";
@@ -443,6 +444,61 @@ describe("runAgentLoop - 工具调用循环", () => {
     expect(toolCalls.length).toBe(2);
     expect(toolResults.length).toBe(2);
     expect(toolResults.map((r) => r.content)).toEqual(["echo: first", "echo: second"]);
+  });
+
+  test("FileRead 命中 path-scoped rule 后，下一轮 system prompt 注入该 rule", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "nova-query-rules-"));
+    try {
+      await Bun.write(join(tempDir, ".git"), "gitdir: fake");
+      await Bun.write(join(tempDir, "src", "a.ts"), "export const a = 1;\n");
+      await Bun.write(
+        join(tempDir, ".claude", "rules", "ts.md"),
+        `---
+paths: ["src/**/*.ts"]
+---
+QUERY_TS_RULE_MARKER
+`,
+      );
+      const runtime = await createProjectInstructionsRuntime({
+        cwd: tempDir,
+        homeDir: join(tempDir, "home-empty"),
+        managedDir: join(tempDir, "etc-empty"),
+      });
+      const fileReadTool: Tool = {
+        name: "FileRead",
+        description: "read a file",
+        input_schema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+        execute: () => "file contents",
+      };
+      const { client, calls } = makeFakeClient([
+        {
+          textChunks: [],
+          toolUses: [{ id: "tu_read", name: "FileRead", input: { path: "src/a.ts" } }],
+          stopReason: "tool_use",
+        },
+        { textChunks: ["done"], stopReason: "end_turn" },
+      ]);
+
+      await collectEvents(
+        runAgentLoop({
+          config: baseConfig,
+          userPrompt: "read the TypeScript file",
+          tools: [fileReadTool],
+          client,
+          cwd: tempDir,
+          projectInstructionsRuntime: runtime,
+        }),
+      );
+
+      expect(String(calls[0]?.system ?? "")).not.toContain("QUERY_TS_RULE_MARKER");
+      expect(String(calls[1]?.system ?? "")).toContain("QUERY_TS_RULE_MARKER");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("AgentTool 派生子 agent，父 agent 只收到最终摘要", async () => {

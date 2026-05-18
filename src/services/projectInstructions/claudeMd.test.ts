@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractIncludePaths, getProjectInstructions } from "./claudeMd.ts";
+import { createProjectInstructionsRuntime } from "./rules.ts";
 
 let tmpRoot: string;
 
@@ -219,5 +220,109 @@ describe("getProjectInstructions", () => {
     const rootIdx = result?.indexOf("ROOT_DOC") ?? -1;
     const subIdx = result?.indexOf("SUB_DOC") ?? -1;
     expect(rootIdx).toBeLessThan(subIdx);
+  });
+
+  test("无 paths 的 .claude/rules eager load，并剥离 frontmatter 与块级 HTML 注释", async () => {
+    const projDir = join(tmpRoot, "proj");
+    await Bun.write(join(projDir, ".git"), "gitdir: fake");
+    await Bun.write(
+      join(projDir, ".claude", "rules", "general.md"),
+      `---
+description: hidden metadata
+---
+VISIBLE_RULE
+<!-- hidden comment -->
+`,
+    );
+
+    const runtime = await createProjectInstructionsRuntime({
+      cwd: projDir,
+      homeDir: join(tmpRoot, "home-empty"),
+      managedDir: join(tmpRoot, "etc-empty"),
+    });
+    const result = runtime.getInstructions() ?? "";
+
+    expect(result).toContain("VISIBLE_RULE");
+    expect(result).not.toContain("description: hidden metadata");
+    expect(result).not.toContain("hidden comment");
+  });
+
+  test("带 paths 的 .claude/rules 只在匹配文件路径后激活", async () => {
+    const projDir = join(tmpRoot, "proj");
+    await Bun.write(join(projDir, ".git"), "gitdir: fake");
+    await Bun.write(join(projDir, "src", "a.ts"), "export const a = 1;\n");
+    await Bun.write(join(projDir, "README.md"), "# readme\n");
+    await Bun.write(
+      join(projDir, ".claude", "rules", "typescript.md"),
+      `---
+paths:
+  - "src/**/*.ts"
+---
+TS_RULE_ONLY_FOR_SRC
+`,
+    );
+
+    const runtime = await createProjectInstructionsRuntime({
+      cwd: projDir,
+      homeDir: join(tmpRoot, "home-empty"),
+      managedDir: join(tmpRoot, "etc-empty"),
+    });
+
+    expect(runtime.getInstructions() ?? "").not.toContain("TS_RULE_ONLY_FOR_SRC");
+    await runtime.activateForToolUse({
+      toolName: "FileRead",
+      input: { path: "README.md" },
+      cwd: projDir,
+    });
+    expect(runtime.getInstructions() ?? "").not.toContain("TS_RULE_ONLY_FOR_SRC");
+
+    const activated = await runtime.activateForToolUse({
+      toolName: "FileRead",
+      input: { path: "src/a.ts" },
+      cwd: projDir,
+    });
+
+    expect(activated[0]?.path).toContain("typescript.md");
+    expect(runtime.getInstructions()).toContain("TS_RULE_ONLY_FOR_SRC");
+  });
+
+  test("path-scoped rules 沿 git root 到 cwd 的目录链保持近端优先级", async () => {
+    const projDir = join(tmpRoot, "proj");
+    const subDir = join(projDir, "packages", "app");
+    await Bun.write(join(projDir, ".git"), "gitdir: fake");
+    await Bun.write(join(subDir, "src", "a.ts"), "export const a = 1;\n");
+    await Bun.write(
+      join(projDir, ".claude", "rules", "root-ts.md"),
+      `---
+paths: ["packages/app/src/**/*.ts"]
+---
+ROOT_TS_RULE
+`,
+    );
+    await Bun.write(
+      join(subDir, ".claude", "rules", "sub-ts.md"),
+      `---
+paths: ["src/**/*.ts"]
+---
+SUB_TS_RULE
+`,
+    );
+
+    const runtime = await createProjectInstructionsRuntime({
+      cwd: subDir,
+      homeDir: join(tmpRoot, "home-empty"),
+      managedDir: join(tmpRoot, "etc-empty"),
+    });
+    await runtime.activateForToolUse({
+      toolName: "FileEdit",
+      input: { path: join(subDir, "src", "a.ts") },
+      cwd: subDir,
+    });
+
+    const instructions = runtime.getInstructions() ?? "";
+    const rootIdx = instructions.indexOf("ROOT_TS_RULE");
+    const subIdx = instructions.indexOf("SUB_TS_RULE");
+    expect(rootIdx).toBeGreaterThan(-1);
+    expect(subIdx).toBeGreaterThan(rootIdx);
   });
 });

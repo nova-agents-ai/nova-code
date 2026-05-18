@@ -18,16 +18,17 @@
  *   4. local  : 沿同样目录链每层查 CLAUDE.local.md
  *
  * 与 claude-code 的差异（保留的简化）：
- *   - 不解析 frontmatter（claude-code 用于 `paths` glob 限制规则作用域；M9 Skills
- *     才会引入完整的 frontmatter 系统）
- *   - 不处理 MEMORY.md 截断 / claudeMdExcludes settings / 子目录 .claude/rules/ 扫描
+ *   - CLAUDE.md 本身不解析 frontmatter；M12 `.claude/rules` 的 `paths`
+ *     frontmatter 由 rules.ts 处理
+ *   - 不处理 MEMORY.md 截断 / claudeMdExcludes settings
  *   - 不挂 logEvent 给 EACCES 之外的失败（保留权限错误埋点对齐 claude-code）
  */
 
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
-import { Lexer } from "marked";
+import { Lexer, type Token } from "marked";
 import { logEvent } from "../analytics/index.ts";
+import type { InstructionsMemoryType } from "../hooks/types.ts";
 import { findGitRoot, getDirectoryChain } from "./pathDiscovery.ts";
 
 /** Include 递归深度上限。超过即停止追加新的 include 内容。 */
@@ -176,6 +177,14 @@ export interface GetProjectInstructionsParams {
   readonly platform?: NodeJS.Platform;
 }
 
+export interface LoadedInstructionFile {
+  readonly path: string;
+  readonly content: string;
+  readonly memoryType: InstructionsMemoryType;
+  readonly globs?: readonly string[];
+  readonly parent?: string;
+}
+
 /**
  * 主入口：返回拼好的 instructions 字符串。无任何文件命中时返回 undefined。
  *
@@ -185,42 +194,85 @@ export interface GetProjectInstructionsParams {
 export async function getProjectInstructions(
   params: GetProjectInstructionsParams,
 ): Promise<string | undefined> {
-  const { cwd } = params;
+  const loaded = await loadBaseInstructionFiles(params);
+  return loaded.length === 0 ? undefined : formatInstructionFiles(loaded);
+}
+
+interface InstructionDiscoveryContext {
+  readonly home: string;
+  readonly managedDir: string;
+  readonly platform: NodeJS.Platform;
+  readonly dirChain: readonly string[];
+}
+
+async function createDiscoveryContext(
+  params: GetProjectInstructionsParams,
+): Promise<InstructionDiscoveryContext> {
   const home = params.homeDir ?? homedir();
   const managedDir = params.managedDir ?? "/etc/nova-code";
   const platform = params.platform ?? process.platform;
+  const gitRoot = await findGitRoot(params.cwd);
+  const dirChain = getDirectoryChain(params.cwd, gitRoot);
+  return { home, managedDir, platform, dirChain };
+}
 
-  const loaded: LoadedFile[] = [];
+export async function loadBaseInstructionFiles(
+  params: GetProjectInstructionsParams,
+): Promise<readonly LoadedInstructionFile[]> {
+  const context = await createDiscoveryContext(params);
+  const loaded: LoadedInstructionFile[] = [];
   const visited = new Set<string>();
 
   // Layer 1: managed (Linux/macOS only)
-  if (platform !== "win32") {
-    await loadFileWithIncludes(join(managedDir, "CLAUDE.md"), loaded, visited, 0);
+  if (context.platform !== "win32") {
+    await loadFileWithIncludes({
+      filePath: join(context.managedDir, "CLAUDE.md"),
+      loaded,
+      visited,
+      depth: 0,
+      memoryType: "Managed",
+    });
   }
 
   // Layer 2: user
-  await loadFileWithIncludes(join(home, ".nova-code", "CLAUDE.md"), loaded, visited, 0);
+  await loadFileWithIncludes({
+    filePath: join(context.home, ".nova-code", "CLAUDE.md"),
+    loaded,
+    visited,
+    depth: 0,
+    memoryType: "User",
+  });
 
   // Layer 3: project chain (CLAUDE.md / .nova-code/CLAUDE.md per dir)
-  const gitRoot = await findGitRoot(cwd);
-  const dirChain = getDirectoryChain(cwd, gitRoot);
-  for (const dir of dirChain) {
-    await loadFileWithIncludes(join(dir, "CLAUDE.md"), loaded, visited, 0);
-    await loadFileWithIncludes(join(dir, ".nova-code", "CLAUDE.md"), loaded, visited, 0);
+  for (const dir of context.dirChain) {
+    await loadFileWithIncludes({
+      filePath: join(dir, "CLAUDE.md"),
+      loaded,
+      visited,
+      depth: 0,
+      memoryType: "Project",
+    });
+    await loadFileWithIncludes({
+      filePath: join(dir, ".nova-code", "CLAUDE.md"),
+      loaded,
+      visited,
+      depth: 0,
+      memoryType: "Project",
+    });
   }
 
   // Layer 4: local chain (CLAUDE.local.md per dir)
-  for (const dir of dirChain) {
-    await loadFileWithIncludes(join(dir, "CLAUDE.local.md"), loaded, visited, 0);
+  for (const dir of context.dirChain) {
+    await loadFileWithIncludes({
+      filePath: join(dir, "CLAUDE.local.md"),
+      loaded,
+      visited,
+      depth: 0,
+      memoryType: "Local",
+    });
   }
 
-  if (loaded.length === 0) return undefined;
-  return formatLoaded(loaded);
-}
-
-interface LoadedFile {
-  readonly path: string;
-  readonly content: string;
+  return loaded;
 }
 
 /**
@@ -234,19 +286,25 @@ interface LoadedFile {
  * 因为后加载者优先级更高；此处实现把 include 的子文件先 push 入 loaded 数组，
  * 再 push 当前文件。
  */
-async function loadFileWithIncludes(
-  filePath: string,
-  loaded: LoadedFile[],
-  visited: Set<string>,
-  depth: number,
-): Promise<void> {
-  const abs = resolve(filePath);
-  if (visited.has(abs)) return;
-  visited.add(abs);
+export interface LoadFileWithIncludesParams {
+  readonly filePath: string;
+  readonly loaded: LoadedInstructionFile[];
+  readonly visited: Set<string>;
+  readonly depth: number;
+  readonly memoryType: InstructionsMemoryType;
+  readonly stripFrontmatter?: boolean;
+  readonly parent?: string;
+  readonly globs?: readonly string[];
+}
+
+export async function loadFileWithIncludes(params: LoadFileWithIncludesParams): Promise<void> {
+  const abs = resolve(params.filePath);
+  if (params.visited.has(abs)) return;
+  params.visited.add(abs);
 
   // @include 子文件：扩展名白名单（对齐 claude-code）
   const ext = extname(abs).toLowerCase();
-  if (depth > 0 && ext !== "" && !TEXT_FILE_EXTENSIONS.has(ext)) {
+  if (params.depth > 0 && ext !== "" && !TEXT_FILE_EXTENSIONS.has(ext)) {
     logEvent("tengu_claude_md_include_skipped_extension", { ext });
     return;
   }
@@ -266,15 +324,44 @@ async function loadFileWithIncludes(
 
   // strip 块级 HTML 注释（保留 inline / code block 内的）
   const { content: strippedContent } = stripHtmlCommentsFromTokens(tokens);
+  const content =
+    params.stripFrontmatter === true ? stripFrontmatter(strippedContent) : strippedContent;
 
-  if (depth < MAX_INCLUDE_DEPTH) {
+  if (params.depth < MAX_INCLUDE_DEPTH) {
     const includes = extractIncludePathsFromTokens(tokens, abs);
     for (const includePath of includes) {
-      await loadFileWithIncludes(includePath, loaded, visited, depth + 1);
+      await loadFileWithIncludes({
+        ...params,
+        filePath: includePath,
+        depth: params.depth + 1,
+        parent: abs,
+        globs: undefined,
+      });
     }
   }
 
-  loaded.push({ path: abs, content: strippedContent });
+  params.loaded.push({
+    path: abs,
+    content,
+    memoryType: params.memoryType,
+    ...(params.globs !== undefined ? { globs: params.globs } : {}),
+    ...(params.parent !== undefined ? { parent: params.parent } : {}),
+  });
+}
+
+function stripFrontmatter(content: string): string {
+  const normalized = content.replaceAll("\r\n", "\n");
+  const lines = normalized.split("\n");
+  if (lines[0]?.trim() !== "---") return content.trim();
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i]?.trim() === "---") {
+      return lines
+        .slice(i + 1)
+        .join("\n")
+        .trim();
+    }
+  }
+  return content.trim();
 }
 
 /**
@@ -292,8 +379,7 @@ async function loadFileWithIncludes(
  *   - 必须以 `./` / `~/` / `/`（非纯 `/`） 开头，或首字符是 letter/digit/. _ -
  */
 export function extractIncludePathsFromTokens(
-  // biome-ignore lint/suspicious/noExplicitAny: marked tokens 是开放联合，最简
-  tokens: any,
+  tokens: readonly Token[],
   basePath: string,
 ): readonly string[] {
   const absolutePaths = new Set<string>();
@@ -320,10 +406,10 @@ export function stripHtmlComments(content: string): { content: string; stripped:
   return stripHtmlCommentsFromTokens(tokens);
 }
 
-function stripHtmlCommentsFromTokens(
-  // biome-ignore lint/suspicious/noExplicitAny: marked tokens 是开放联合
-  tokens: any,
-): { content: string; stripped: boolean } {
+function stripHtmlCommentsFromTokens(tokens: readonly Token[]): {
+  content: string;
+  stripped: boolean;
+} {
   let result = "";
   let stripped = false;
   const commentSpan = /<!--[\s\S]*?-->/g;
@@ -350,23 +436,12 @@ function stripHtmlCommentsFromTokens(
 // 内部辅助
 // ────────────────────────────────────────────────────────────────────────────
 
-interface MarkdownToken {
-  type: string;
-  text?: string;
-  raw?: string;
-  // biome-ignore lint/suspicious/noExplicitAny: 递归结构
-  tokens?: any;
-  // biome-ignore lint/suspicious/noExplicitAny: list 的 items 结构
-  items?: any;
-}
-
 function processElements(
-  // biome-ignore lint/suspicious/noExplicitAny: marked tokens 是开放联合
-  elements: any,
+  elements: readonly Token[],
   basePath: string,
   absolutePaths: Set<string>,
 ): void {
-  for (const element of elements as MarkdownToken[]) {
+  for (const element of elements) {
     if (element.type === "code" || element.type === "codespan") {
       continue;
     }
@@ -388,10 +463,10 @@ function processElements(
       extractPathsFromText(element.text, basePath, absolutePaths);
     }
 
-    if (element.tokens !== undefined) {
+    if ("tokens" in element && Array.isArray(element.tokens)) {
       processElements(element.tokens, basePath, absolutePaths);
     }
-    if (element.items !== undefined) {
+    if (element.type === "list") {
       processElements(element.items, basePath, absolutePaths);
     }
   }
@@ -482,7 +557,7 @@ function errnoCode(error: unknown): string | undefined {
 /**
  * 把多份 LoadedFile 拼成最终给 system prompt 的字符串。
  */
-function formatLoaded(loaded: readonly LoadedFile[]): string {
+export function formatInstructionFiles(loaded: readonly LoadedInstructionFile[]): string {
   const parts: string[] = [PROJECT_INSTRUCTIONS_HEADER];
   for (const f of loaded) {
     parts.push(`=== file: ${f.path} ===\n${f.content.trimEnd()}`);
