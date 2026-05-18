@@ -19,6 +19,11 @@ import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import {
+  loadPluginCatalog,
+  mergeHooksConfig,
+  mergeMcpServersConfig,
+} from "../../services/plugins/index.ts";
 import { createProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import { loadSkillCatalog } from "../../services/skills/index.ts";
 import { builtinTools, createSkillTool } from "../../tools.ts";
@@ -116,7 +121,18 @@ export const chatCommand: CommandDefinition = {
     }
 
     try {
-      mcpRegistry = await createMcpToolRegistry(config);
+      const pluginCatalog = await loadPluginCatalog({ cwd: process.cwd() });
+      for (const warning of pluginCatalog.warnings) {
+        process.stderr.write(`[plugin] ${warning}\n`);
+      }
+      const effectiveHooks = mergeHooksConfig(config.hooks, pluginCatalog.hooks);
+      const effectiveMcpServers = mergeMcpServersConfig(
+        config.mcpServers,
+        pluginCatalog.mcpServers,
+      );
+      const effectiveConfig = { ...config, hooks: effectiveHooks, mcpServers: effectiveMcpServers };
+
+      mcpRegistry = await createMcpToolRegistry(effectiveConfig);
       for (const warning of mcpRegistry.warnings) {
         process.stderr.write(`[mcp] ${warning}\n`);
       }
@@ -134,10 +150,14 @@ export const chatCommand: CommandDefinition = {
       // M4/M12: 启动时加载 CLAUDE.md + eager rules；path-scoped rules 由 runtime 延迟激活。
       const projectInstructionsRuntime = await createProjectInstructionsRuntime({
         cwd: process.cwd(),
-        hooks: config.hooks,
+        hooks: effectiveHooks,
         sessionId: session.meta.sessionId,
+        pluginRuleContributions: pluginCatalog.ruleContributions,
       });
-      const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
+      const skillCatalog = await loadSkillCatalog({
+        cwd: process.cwd(),
+        extraRoots: pluginCatalog.skillRoots,
+      });
       for (const warning of skillCatalog.warnings) {
         process.stderr.write(`[skill] ${warning}\n`);
       }
@@ -153,11 +173,13 @@ export const chatCommand: CommandDefinition = {
         hasProjectInstructions: projectInstructionsRuntime.getInstructions() !== undefined,
         skillCount: skillCatalog.skills.length,
         mcpToolCount: mcpRegistry.tools.length,
+        pluginCount: pluginCatalog.plugins.length,
+        enabledPluginCount: pluginCatalog.plugins.filter((plugin) => plugin.enabled).length,
       });
 
       const exitCode = await runChatRepl({
         session,
-        config,
+        config: effectiveConfig,
         tools: [...baseTools, ...mcpRegistry.tools],
         getTools: () => [...baseTools, ...(mcpRegistry?.tools ?? [])],
         debugSink,
@@ -167,6 +189,7 @@ export const chatCommand: CommandDefinition = {
         permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
         projectInstructionsRuntime,
         skills: skillCatalog.skills,
+        pluginSlashCommands: pluginCatalog.slashCommands,
         costTracker,
       });
       await appendChatCostLedgerBestEffort(costTracker, session.meta.sessionId, exitCode);

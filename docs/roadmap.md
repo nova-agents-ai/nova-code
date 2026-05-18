@@ -330,7 +330,7 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 测试：新增 projectInstructions 单测、QueryEngine path-rule 集成测试、`m12-e2e-rules` 子进程验证
 - 详见 `docs/design/M12-rules.md`、使用手册 `docs/manual/M12-usage-guide.md`、实现架构 `docs/architecture/M12-architecture.md`
 
-### M13 — 插件系统
+### M13 — 插件系统 ✅（已完成）
 
 本地插件包与插件管理命令，让插件可以声明 skills、commands、hooks、MCP servers、rules 与配置项。
 
@@ -346,6 +346,16 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 **机会**：M9 Skills、M10 Hooks、M12 Rules 与 M8 MCP 已具备基础，插件系统应做成“扩展打包层”，不要重新发明各子系统。
 
 **DoD**：一个本地插件安装后，可以同时贡献一个 skill、一个 slash command、一个 hook 和一段 path-scoped rule，并能被禁用后完全消失。
+
+**交付摘要**：
+- 新增 `src/services/plugins/`：本地插件发现、`plugin.json` manifest 校验、信任/启用状态读取、贡献项加载与变量替换
+- 支持项目级 `.nova-code/plugins/` 与用户级 `~/.nova-code/plugins/`，插件默认只发现不生效；`plugin enable <name> --yes` 后写入 `~/.nova-code/config.json` 的 `plugins` 状态
+- 新增 `nova-code plugin list|enable|disable|reload|validate`，其中 `reload` 重新发现 enabled plugins 并记录 `lastReloadedAt`
+- 插件 skills 作为额外 skill root 注入 M9；插件 custom slash commands 以 `/plugin:command` 命名空间在 ask/chat 中本地展开
+- 插件 hooks 复用 M10 `HooksConfig` 并支持 `${NOVA_PLUGIN_ROOT}`；插件 MCP servers 复用 M8 config 并按 `<plugin>_<server>` 命名空间化
+- 插件 rules 复用 M12 rules runtime：无 `paths` eager load，带 `paths` 在 FileRead/FileEdit/FileWrite 命中后激活，匹配基准为当前 cwd
+- 测试：新增插件 service/CLI 单测与 `m13-e2e-plugins` 子进程验证，覆盖 skill、slash command、hook、path-scoped rule 和禁用消失
+- 详见 `docs/design/M13-plugins.md`、使用手册 `docs/manual/M13-usage-guide.md`、实现架构 `docs/architecture/M13-architecture.md`
 
 ### M14 — Prompt 附件与 @-mention 上下文注入
 
@@ -501,7 +511,7 @@ Phase 3 不预设具体顺序。
                   M12 .claude/rules
                          │
                          ▼
-                  M13 Plugins
+                  M13 Plugins ✅
                          │
                          ▼
              M14 Attachments / @-mention
@@ -622,6 +632,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.18**（2026-05-18）：M13 插件系统落地。新增本地插件发现与 `plugin.json` manifest 校验，支持 `.nova-code/plugins/` 与 `~/.nova-code/plugins/`；新增 `nova-code plugin list|enable|disable|reload|validate` 与 `PersistedConfig.plugins` 信任/启用状态；插件可贡献 skills、`/plugin:command` custom slash commands、hooks、MCP servers 与 path-scoped rules；ask/chat 启动时把插件贡献项合并进既有 M8/M9/M10/M12 子系统；新增 M13 设计文档 / 使用手册 / 架构快照。
 - **v2.17**（2026-05-17）：M12 `.claude/rules` 逻辑落地。新增 `ProjectInstructionsRuntime`，支持递归扫描 `.claude/rules/**/*.md`、无 `paths` 规则 eager load、带 `paths` 规则在 FileRead/FileEdit/FileWrite 命中文件后延迟激活；规则内容复用 @include 与 HTML comment strip 并剥离 frontmatter；Hooks 扩展 `InstructionsLoaded` 审计事件；新增 M12 设计文档 / 使用手册 / 架构快照。
 - **v2.16**（2026-05-17）：进入 M12 前重排 Phase 2 roadmap：新增 M12 `.claude/rules` 逻辑、M13 插件系统、M14 Prompt 附件与 @-mention 上下文注入、M15 Plan Mode 一等运行模式；原 M12 多 Provider / M13 TUI / M14 Resume-Save-Share / M14.5 重构窗口顺延为 M16 / M17 / M18 / M18.5，并同步更新 Phase 2 总览、依赖图与重构窗口说明。
 - **v2.15**（2026-05-17）：M11 AgentTool 子 agent 派生落地。新增 `src/tools/AgentTool` 与 `SubAgentRuntime` 注入，支持模型通过 `Agent` 工具启动同步 one-shot 子 agent；子 agent 复用父会话配置、权限、hooks 与 cwd，父上下文文本化注入，父 agent 只收到最终摘要；支持 `general-purpose` / `explore` 两个轻量类型并禁止递归 Agent；mock transport 新增 `agent-loop`，新增 M11 设计文档 / 使用手册 / 架构快照。

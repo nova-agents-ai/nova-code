@@ -76,7 +76,26 @@ export interface PersistedConfig {
   readonly mcpServers?: McpServersConfig;
   /** M10: tool lifecycle hooks, keyed by hook event name. */
   readonly hooks?: HooksConfig;
+  /** M13: local plugin trust/enable state, keyed by plugin manifest name. */
+  readonly plugins?: PluginStatesConfig;
 }
+
+export interface PluginStateConfig {
+  readonly enabled?: boolean;
+  readonly trusted?: boolean;
+  readonly version?: string;
+  readonly lastReloadedAt?: string;
+  /**
+   * Absolute plugin root recorded at trust time. When present, the loader will
+   * invalidate trust if a plugin with the same name is later discovered at a
+   * different path — preventing a globally-trusted name from auto-trusting
+   * an unrelated plugin in a sibling project. Missing values fall back to
+   * legacy lenient behavior so existing trust state still works.
+   */
+  readonly path?: string;
+}
+
+export type PluginStatesConfig = Readonly<Record<string, PluginStateConfig>>;
 
 /**
  * 经过缺省值合并 + 环境变量覆盖后的最终生效配置。
@@ -323,10 +342,62 @@ function validatePersistedConfig(value: unknown, path: string): PersistedConfig 
     result.hooks = validateHooksConfig(obj.hooks, `Config at ${path}`);
   }
 
+  if (obj.plugins !== undefined) {
+    result.plugins = validatePluginStatesConfig(obj.plugins, path);
+  }
+
   return result;
 }
 
-function validateMcpServersConfig(value: unknown, path: string): McpServersConfig {
+function validatePluginStatesConfig(value: unknown, path: string): PluginStatesConfig {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(
+      `Config at ${path}: 'plugins' must be an object, got ${typeName(value)}.`,
+    );
+  }
+
+  const states: Record<string, PluginStateConfig> = {};
+  for (const [name, rawState] of Object.entries(value as Record<string, unknown>)) {
+    validatePluginName(name, `Config at ${path}: plugins`);
+    states[name] = validatePluginStateConfig(rawState, `Config at ${path}: plugins.${name}`);
+  }
+  return states;
+}
+
+function validatePluginStateConfig(value: unknown, field: string): PluginStateConfig {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(`${field} must be an object, got ${typeName(value)}.`);
+  }
+  const obj = value as Readonly<Record<string, unknown>>;
+  const result: { -readonly [K in keyof PluginStateConfig]: PluginStateConfig[K] } = {};
+  if (obj["enabled"] !== undefined) {
+    result.enabled = validateBoolean(obj["enabled"], `${field}.enabled`);
+  }
+  if (obj["trusted"] !== undefined) {
+    result.trusted = validateBoolean(obj["trusted"], `${field}.trusted`);
+  }
+  if (obj["version"] !== undefined) {
+    result.version = validateNonEmptyString(obj["version"], `${field}.version`);
+  }
+  if (obj["lastReloadedAt"] !== undefined) {
+    result.lastReloadedAt = validateNonEmptyString(
+      obj["lastReloadedAt"],
+      `${field}.lastReloadedAt`,
+    );
+  }
+  if (obj["path"] !== undefined) {
+    result.path = validateNonEmptyString(obj["path"], `${field}.path`);
+  }
+  return result;
+}
+
+function validatePluginName(value: string, field = "plugin name"): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new ConfigError(`${field} '${value}' must match /^[A-Za-z0-9_-]+$/.`);
+  }
+}
+
+export function validateMcpServersConfig(value: unknown, path: string): McpServersConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(
       `Config at ${path}: 'mcpServers' must be an object, got ${typeName(value)}.`,

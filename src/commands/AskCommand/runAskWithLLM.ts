@@ -22,6 +22,12 @@ import { createAutoCompactTrackingState } from "../../services/compact/autoCompa
 import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import {
+  loadPluginCatalog,
+  mergeHooksConfig,
+  mergeMcpServersConfig,
+  resolvePluginSlashInvocation,
+} from "../../services/plugins/index.ts";
 import { createProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import {
   formatSkillListingInstructions,
@@ -78,7 +84,14 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     }
 
     const config = await loadConfig();
-    mcpRegistry = await createMcpToolRegistry(config);
+    const pluginCatalog = await loadPluginCatalog({ cwd: process.cwd() });
+    for (const warning of pluginCatalog.warnings) {
+      process.stderr.write(`[plugin] ${warning}\n`);
+    }
+    const effectiveHooks = mergeHooksConfig(config.hooks, pluginCatalog.hooks);
+    const effectiveMcpServers = mergeMcpServersConfig(config.mcpServers, pluginCatalog.mcpServers);
+    const effectiveConfig = { ...config, hooks: effectiveHooks, mcpServers: effectiveMcpServers };
+    mcpRegistry = await createMcpToolRegistry(effectiveConfig);
     for (const warning of mcpRegistry.warnings) {
       process.stderr.write(`[mcp] ${warning}\n`);
     }
@@ -91,11 +104,15 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     // M4/M12: 启动时加载 CLAUDE.md + eager rules；path-scoped rules 由 runtime 延迟激活。
     const projectInstructionsRuntime = await createProjectInstructionsRuntime({
       cwd: process.cwd(),
-      hooks: config.hooks,
+      hooks: effectiveHooks,
       sessionId: "ask",
       signal: abortController.signal,
+      pluginRuleContributions: pluginCatalog.ruleContributions,
     });
-    const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
+    const skillCatalog = await loadSkillCatalog({
+      cwd: process.cwd(),
+      extraRoots: pluginCatalog.skillRoots,
+    });
     for (const warning of skillCatalog.warnings) {
       process.stderr.write(`[skill] ${warning}\n`);
     }
@@ -104,8 +121,14 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       process.stderr.write(`ask: ${skillSlashInvocation.message}\n`);
       return 1;
     }
+    const pluginSlashInvocation = resolvePluginSlashInvocation(
+      question,
+      pluginCatalog.slashCommands,
+    );
     const userPrompt =
-      skillSlashInvocation?.kind === "invoke" ? skillSlashInvocation.prompt : question;
+      skillSlashInvocation?.kind === "invoke"
+        ? skillSlashInvocation.prompt
+        : (pluginSlashInvocation?.prompt ?? question);
 
     const skillListingInstructions = formatSkillListingInstructions(skillCatalog.skills);
     const runtimeInstructions = mergeInstructionBlocks(skillListingInstructions);
@@ -124,6 +147,8 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       skillCount: skillCatalog.skills.length,
       skillNames: skillCatalog.skills.map((skill) => skill.name).join(","),
       mcpToolCount: mcpRegistry.tools.length,
+      pluginCount: pluginCatalog.plugins.length,
+      enabledPluginCount: pluginCatalog.plugins.filter((plugin) => plugin.enabled).length,
     });
     let inAssistantText = false;
 
@@ -138,7 +163,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     }
 
     const generator = runAgentLoop({
-      config,
+      config: effectiveConfig,
       userPrompt,
       tools,
       signal: abortController.signal,
@@ -156,7 +181,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       autoCompactTracking,
       ...(runtimeInstructions !== undefined ? { projectInstructions: runtimeInstructions } : {}),
       projectInstructionsRuntime,
-      hooks: config.hooks,
+      hooks: effectiveHooks,
       sessionId: "ask",
     });
 
