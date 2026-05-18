@@ -205,8 +205,8 @@ function makeRecord(
 ): HookExecutionRecord {
   return {
     hookEventName: params.input.hook_event_name,
-    toolUseId: params.input.tool_use_id,
-    toolName: params.input.tool_name,
+    toolUseId: getRecordToolUseId(params.input),
+    toolName: getRecordToolName(params.input),
     command: params.hook.command,
     outcome,
     exitCode: result.exitCode,
@@ -214,6 +214,26 @@ function makeRecord(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+function getRecordToolUseId(input: HookInput): string {
+  switch (input.hook_event_name) {
+    case HookEventName.PRE_TOOL_USE:
+    case HookEventName.POST_TOOL_USE:
+      return input.tool_use_id;
+    case HookEventName.INSTRUCTIONS_LOADED:
+      return "instructions_loaded";
+  }
+}
+
+function getRecordToolName(input: HookInput): string {
+  switch (input.hook_event_name) {
+    case HookEventName.PRE_TOOL_USE:
+    case HookEventName.POST_TOOL_USE:
+      return input.tool_name;
+    case HookEventName.INSTRUCTIONS_LOADED:
+      return input.file_path;
+  }
 }
 
 type ParsedHookOutput =

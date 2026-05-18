@@ -57,7 +57,8 @@ function parseMockScenario(value: string | undefined): MockScenario {
     value === "web-loop" ||
     value === "mcp-loop" ||
     value === "skill-loop" ||
-    value === "agent-loop"
+    value === "agent-loop" ||
+    value === "rules-loop"
   ) {
     return value;
   }

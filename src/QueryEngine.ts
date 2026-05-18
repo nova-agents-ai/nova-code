@@ -63,6 +63,7 @@ import {
 } from "./services/permissions/PermissionProvider.ts";
 import { evaluatePermission } from "./services/permissions/permissionEngine.ts";
 import type { PermissionStore } from "./services/permissions/permissionStore.ts";
+import type { ProjectInstructionsRuntime } from "./services/projectInstructions/index.ts";
 import type { SubAgentRunParams, SubAgentRuntime, Tool } from "./Tool.ts";
 import { AGENT_TOOL_NAME, SubAgentTypeEnum } from "./tools/AgentTool/constants.ts";
 import { TODO_WRITE_TOOL_NAME } from "./tools/TodoWriteTool/constants.ts";
@@ -153,10 +154,10 @@ export interface AgentLoopParams {
   /** 用于 file glob 相对化；不传时 evaluatePermission 会 fallback 到 process.cwd()。 */
   readonly cwd?: string;
 
-  // ── M4 Compact 注入（5 个字段同进同出）────────────────────────────────
+  // ── M4 Compact / M12 Project Instructions 注入 ────────────────────────
   //
   // 设计原则：全部可选，不传时主循环行为与 M3 完全一致（无自动 compact、无
-  // CLAUDE.md 注入）。这样保证 M3 既有测试不需要改。
+  // 项目指令注入）。这样保证 M3 既有测试不需要改。
   //
   // 一旦传入 autoCompactTracking + autoCompactEnabled=true，主循环会在每轮
   // streamOneTurn 之前调 autoCompactIfNeeded，并按需替换内部 messages 数组、
@@ -167,10 +168,20 @@ export interface AgentLoopParams {
   /** 自动 compact 的可变 tracking 状态；调用方通常按"每会话一份"持有。 */
   readonly autoCompactTracking?: AutoCompactTrackingState;
   /**
-   * 已加载好的 CLAUDE.md 拼成的字符串（4 层合并 + @include）。不传 = 不注入。
-   * 启动时由 chat / ask 命令加载并透传，避免每轮 LLM 调用都重新读盘。
+   * 额外的静态 system instruction block。不传 = 不追加。
+   *
+   * M12 后，CLAUDE.md + .claude/rules 由 projectInstructionsRuntime 管理；
+   * 本字段主要用于 M9 skills listing，或调用方显式追加的固定指令。
+   *
+   * QueryEngine 会在每轮 LLM 调用前，将 projectInstructionsRuntime.getInstructions()
+   * 与本字段合并后追加到 system prompt。
    */
   readonly projectInstructions?: string;
+  /**
+   * M12 项目指令运行时：启动时加载 CLAUDE.md + eager rules，并在
+   * FileRead/FileEdit/FileWrite 成功处理匹配路径后激活 path-scoped rules。
+   */
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
 
   // ── M10 Hooks 注入（全部可选）─────────────────────────────────────────
   /** 已解析的 hooks 配置；不传或空对象时不会执行任何用户脚本。 */
@@ -186,7 +197,7 @@ export const DEFAULT_SYSTEM_PROMPT =
   "Be concise and direct.";
 
 /**
- * 构造实际发给 SDK 的 system prompt。CLAUDE.md / project instructions 固定追加在
+ * 构造实际发给 SDK 的 system prompt。调用方提供的 projectInstructions 会追加在
  * base prompt 之后，保持主循环与 compact forked-agent 请求的 cache key 一致。
  */
 export function buildSystemPrompt(params: {
@@ -212,6 +223,13 @@ function shouldIncludeTodoWritePrompt(params: {
   return params.toolNames?.includes(TODO_WRITE_TOOL_NAME) === true;
 }
 
+function mergeInstructionBlocks(...blocks: readonly (string | undefined)[]): string | undefined {
+  const merged = blocks
+    .map((block) => block?.trim())
+    .filter((block): block is string => block !== undefined && block !== "");
+  return merged.length === 0 ? undefined : merged.join("\n\n");
+}
+
 /**
  * 执行一次完整的 agent loop。
  *
@@ -224,14 +242,6 @@ export async function* runAgentLoop(
   params: AgentLoopParams,
 ): AsyncGenerator<AgentEvent, NovaMessage, void> {
   const { config, userPrompt, tools } = params;
-  // M4：projectInstructions 拼到 system prompt 末尾（CLAUDE.md 4 层）
-  const systemPrompt = buildSystemPrompt({
-    ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
-    toolNames: tools.map((tool) => tool.name),
-    ...(params.projectInstructions !== undefined
-      ? { projectInstructions: params.projectInstructions }
-      : {}),
-  });
   const signal = params.signal ?? new AbortController().signal;
   const client = params.client ?? createAnthropicClient(config);
 
@@ -247,11 +257,23 @@ export async function* runAgentLoop(
 
   // 工具按 SDK 期望的 shape 转换一次（loop 内每次重建会浪费 CPU）
   const sdkTools: SdkTool[] = tools.map(toSdkTool);
+  const toolNames = tools.map((tool) => tool.name);
 
   for (let turn = 1; turn <= config.maxTurns; turn += 1) {
     if (signal.aborted) {
       throw new AbortError();
     }
+
+    // M12：path-scoped rules 可能在上一轮工具执行后被激活，所以 system prompt
+    // 必须每轮重建，而不能在 loop 启动时固定。
+    const systemPrompt = buildSystemPrompt({
+      ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+      toolNames,
+      projectInstructions: mergeInstructionBlocks(
+        params.projectInstructionsRuntime?.getInstructions(),
+        params.projectInstructions,
+      ),
+    });
 
     // M4：每轮 streamOneTurn 之前检查是否需要自动 compact
     // 仅在调用方注入了 autoCompactTracking + autoCompactEnabled=true 时启用
@@ -341,6 +363,8 @@ export async function* runAgentLoop(
       hooks: params.hooks,
       sessionId: params.sessionId,
       parentMessages: messages.slice(0, -1),
+      projectInstructionsRuntime: params.projectInstructionsRuntime,
+      projectInstructions: params.projectInstructions,
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -401,8 +425,8 @@ async function* streamOneTurn(
         model: config.model,
         params: requestParams,
       });
-    } catch {
-      // sink 内部已做降级；再抛无意义
+    } catch (error) {
+      logLlmSinkFailure(turn, "request", error);
     }
   }
 
@@ -466,8 +490,8 @@ async function* streamOneTurn(
         durationMs,
         message: final,
       });
-    } catch {
-      // ignore
+    } catch (error) {
+      logLlmSinkFailure(turn, "response", error);
     }
   }
 
@@ -516,9 +540,17 @@ function writeLlmError(
       durationMs,
       error: { name, message },
     });
-  } catch {
-    // ignore
+  } catch (error) {
+    logLlmSinkFailure(turn, "error", error);
   }
+}
+
+function logLlmSinkFailure(turn: number, stage: string, error: unknown): void {
+  logEvent("tengu_llm_log_sink_error", {
+    turn,
+    stage,
+    reason: error instanceof Error ? error.name : "unknown",
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -543,6 +575,8 @@ interface ExecuteToolsParams {
   readonly hooks?: HooksConfig;
   readonly sessionId?: string;
   readonly parentMessages: readonly NovaMessage[];
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
+  readonly projectInstructions?: string;
 }
 
 /** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
@@ -570,6 +604,8 @@ async function* executeToolsAndYieldEvents(
     hooks,
     sessionId,
     parentMessages,
+    projectInstructionsRuntime,
+    projectInstructions,
   } = params;
   const resolvedCwd = cwd ?? process.cwd();
   const subAgentRuntime = createSubAgentRuntime({
@@ -585,6 +621,8 @@ async function* executeToolsAndYieldEvents(
     hooks,
     sessionId,
     parentMessages,
+    projectInstructionsRuntime,
+    projectInstructions,
   });
 
   // 先按声明顺序发出所有 tool_call 事件（与原行为一致，便于 UI 先看到本轮工具列表）
@@ -766,6 +804,11 @@ async function* executeToolsAndYieldEvents(
     if (outcome === undefined) continue;
 
     if (outcome.status === "fulfilled") {
+      await activateProjectRulesForTool({
+        runtime: projectInstructionsRuntime,
+        use,
+        cwd: resolvedCwd,
+      });
       const postHook = await executePostToolUseHooks({
         use,
         content: outcome.value,
@@ -902,6 +945,19 @@ function applyPostHookContent(content: string, hook: HookBatchResult): string {
   return `${base}\n\n[PostToolUse hook context]\n${hook.additionalContexts.join("\n")}`;
 }
 
+async function activateProjectRulesForTool(params: {
+  readonly runtime: ProjectInstructionsRuntime | undefined;
+  readonly use: ToolUseBlock;
+  readonly cwd: string;
+}): Promise<void> {
+  if (params.runtime === undefined) return;
+  await params.runtime.activateForToolUse({
+    toolName: params.use.name,
+    input: params.use.input,
+    cwd: params.cwd,
+  });
+}
+
 /**
  * 从工具入参构造一条 behavior=allow 的持久化规则。
  *
@@ -941,6 +997,8 @@ interface SubAgentRuntimeParams {
   readonly hooks?: HooksConfig;
   readonly sessionId?: string;
   readonly parentMessages: readonly NovaMessage[];
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
+  readonly projectInstructions?: string;
 }
 
 interface SubAgentPromptParts {
@@ -992,6 +1050,12 @@ async function runSubAgent(
     autoCompactTracking: createAutoCompactTrackingState(),
     ...(runtime.hooks !== undefined ? { hooks: runtime.hooks } : {}),
     sessionId: formatSubAgentSessionId(runtime.sessionId, request.description),
+    ...(runtime.projectInstructions !== undefined
+      ? { projectInstructions: runtime.projectInstructions }
+      : {}),
+    ...(runtime.projectInstructionsRuntime !== undefined
+      ? { projectInstructionsRuntime: runtime.projectInstructionsRuntime }
+      : {}),
   });
   const { finalMessage, turns } = await collectSubAgentFinalMessage(generator);
   return { agentType, turns, summary: extractTextFromMessage(finalMessage) };

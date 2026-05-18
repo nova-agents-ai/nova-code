@@ -11,7 +11,8 @@ export type MockScenario =
   | "web-loop"
   | "mcp-loop"
   | "skill-loop"
-  | "agent-loop";
+  | "agent-loop"
+  | "rules-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -32,7 +33,7 @@ interface MockRequestBody {
   readonly tools?: unknown;
   /** M4: compact 请求应设置 tool_choice:none，强制纯文本 summary。 */
   readonly tool_choice?: unknown;
-  /** M4: 用于把 CLAUDE.md 注入情况写到 mock log。 */
+  /** M4/M12: 用于把 system prompt / project instructions 注入情况写到 mock log。 */
   readonly system?: unknown;
 }
 
@@ -144,7 +145,32 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildAgentLoopTurn(body);
   }
 
+  if (scenario === "rules-loop") {
+    return buildRulesLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildRulesLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  const path = process.env["MOCK_RULES_FILE_PATH"] ?? "src/a.ts";
+  if (resultCount === 0) {
+    return {
+      leadingText: "Reading the scoped file...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Reading the scoped file..."),
+        makeToolUseContent("toolu_rules_01", "FileRead", { path }),
+      ],
+    };
+  }
+
+  return {
+    leadingText: "Done. Scoped rules loaded.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. Scoped rules loaded."),
+  };
 }
 
 function buildAgentLoopTurn(body: MockRequestBody): MockTurnPlan {
@@ -372,10 +398,10 @@ function extractLastToolResultText(messages: MockRequestBody["messages"]): strin
 }
 
 /**
- * M4: 把 system 字段抽前 500 字符放到 mock log，供 e2e 断言 CLAUDE.md 是否注入。
+ * M4/M12: 把 system 字段抽前缀放到 mock log，供 e2e 断言项目指令是否注入。
  */
 function extractSystemSnippet(system: unknown): string | undefined {
-  // 给上限一点余量；CLAUDE.md 4 层 + @include 时 parent 内容靠后，需要够长才捕得到
+  // 给上限一点余量；CLAUDE.md / rules / skills 合并后内容靠后，需要够长才捕得到。
   const MAX = 4000;
   if (typeof system === "string") return system.slice(0, MAX);
   if (Array.isArray(system)) {
@@ -397,9 +423,19 @@ function extractToolChoiceType(toolChoice: unknown): string | undefined {
 async function readLogFileText(path: string): Promise<string> {
   try {
     return await Bun.file(path).text();
-  } catch {
-    return "";
+  } catch (error) {
+    const code = errnoCode(error);
+    if (code === "ENOENT" || code === "EACCES") return "";
+    throw error;
   }
+}
+
+function errnoCode(error: unknown): string | undefined {
+  if (error !== null && typeof error === "object" && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
 }
 
 function makeMockStream(turn: MockTurnPlan, logPromise: Promise<void>): MockStream {

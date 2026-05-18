@@ -65,11 +65,10 @@ export interface SlashContext {
   /** 权限模式 ref；/permissions mode 依赖它。 */
   readonly permissionModeRef?: PermissionModeRef;
   /**
-   * M4：发 LLM 调用的斜杠命令需要的运行时上下文（仅 /compact 等使用）。
+   * M4/M12：发 LLM 调用的斜杠命令需要的运行时上下文（仅 /compact 等使用）。
    *
    * 不强制存在 —— 单测场景调度普通斜杠命令（/clear /save 等）时可省略。
-   * /compact 在 chatRuntime 缺失时打印 "权限系统未启用" 风格的提示并 continue，
-   * 不报错。
+   * /compact 在 chatRuntime 缺失时打印"运行时上下文未注入"提示并 continue，不报错。
    */
   readonly chatRuntime?: {
     readonly config: ResolvedConfig;

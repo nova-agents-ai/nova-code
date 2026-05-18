@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -597,18 +597,24 @@ describe("m1-5-e2e-writeflow", () => {
     const aPath = join(workDir, "a.ts");
     const bPath = join(workDir, "b.ts");
     const cPath = join(workDir, "c.ts");
+    const childHome = join(workDir, "home");
+    await mkdir(childHome, { recursive: true });
     await Bun.write(aPath, "export function oldFn() { return 1; }\n");
     await Bun.write(bPath, "// TODO: also rename oldFn here one day\n");
     await Bun.write(cPath, "// oldFn appears in comment too\n");
 
     const proc = Bun.spawn({
-      cmd: ["bun", "run", BIN_PATH, "ask", "rename oldFn to newFn"],
+      cmd: ["bun", BIN_PATH, "ask", "rename oldFn to newFn"],
       env: {
-        ...process.env,
+        PATH: process.env["PATH"] ?? "",
+        HOME: childHome,
+        USERPROFILE: childHome,
         NOVA_API_KEY: "sk-mock-anything",
         NOVA_TRANSPORT: "mock",
         NOVA_MOCK_SCENARIO: "edit-loop",
         MOCK_EDIT_WORKDIR: workDir,
+        NOVA_WEB_PROXY: "",
+        NOVA_WEB_PROXY_DOMAINS: "",
       },
       stdin: "ignore",
       stdout: "pipe",

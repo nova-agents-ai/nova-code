@@ -31,6 +31,8 @@ function getMatchQuery(input: HookInput): string {
     case HookEventName.PRE_TOOL_USE:
     case HookEventName.POST_TOOL_USE:
       return input.tool_name;
+    case HookEventName.INSTRUCTIONS_LOADED:
+      return input.load_reason;
   }
 }
 
@@ -41,13 +43,15 @@ function matchesPattern(query: string, matcher: string | undefined): boolean {
   }
   try {
     return new RegExp(matcher).test(query);
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
   }
 }
 
 function matchesIfCondition(condition: string | undefined, input: HookInput): boolean {
   if (condition === undefined || condition.trim() === "") return true;
+  if (input.hook_event_name === HookEventName.INSTRUCTIONS_LOADED) return false;
   const parsed = parseIfCondition(condition);
   if (parsed === undefined) return false;
   if (parsed.toolName !== input.tool_name) return false;
@@ -75,8 +79,9 @@ function getToolComparableValue(input: Readonly<Record<string, unknown>>): strin
   if (path !== undefined) return path;
   try {
     return JSON.stringify(input);
-  } catch {
-    return "";
+  } catch (error) {
+    if (error instanceof TypeError) return "";
+    throw error;
   }
 }
 

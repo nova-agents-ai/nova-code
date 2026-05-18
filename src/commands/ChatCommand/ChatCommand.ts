@@ -19,7 +19,7 @@ import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
-import { getProjectInstructions } from "../../services/projectInstructions/index.ts";
+import { createProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import { loadSkillCatalog } from "../../services/skills/index.ts";
 import { builtinTools, createSkillTool } from "../../tools.ts";
 import { createFileDebugSink, type DebugSink, NULL_DEBUG_SINK } from "../AskCommand/debugSink.ts";
@@ -131,8 +131,12 @@ export const chatCommand: CommandDefinition = {
         }
       }
 
-      // M4: 启动时一次性加载 CLAUDE.md 4 层（不抛错；缺失时 undefined）
-      const projectInstructions = await getProjectInstructions({ cwd: process.cwd() });
+      // M4/M12: 启动时加载 CLAUDE.md + eager rules；path-scoped rules 由 runtime 延迟激活。
+      const projectInstructionsRuntime = await createProjectInstructionsRuntime({
+        cwd: process.cwd(),
+        hooks: config.hooks,
+        sessionId: session.meta.sessionId,
+      });
       const skillCatalog = await loadSkillCatalog({ cwd: process.cwd() });
       for (const warning of skillCatalog.warnings) {
         process.stderr.write(`[skill] ${warning}\n`);
@@ -146,7 +150,7 @@ export const chatCommand: CommandDefinition = {
         model: config.model,
         resumed: resumeId !== undefined,
         dangerouslySkipPermissions,
-        hasProjectInstructions: projectInstructions !== undefined,
+        hasProjectInstructions: projectInstructionsRuntime.getInstructions() !== undefined,
         skillCount: skillCatalog.skills.length,
         mcpToolCount: mcpRegistry.tools.length,
       });
@@ -161,7 +165,7 @@ export const chatCommand: CommandDefinition = {
         permissionStore,
         // --dangerously-skip-permissions → bypassPermissions，否则 default
         permissionMode: dangerouslySkipPermissions ? "bypassPermissions" : "default",
-        ...(projectInstructions !== undefined ? { projectInstructions } : {}),
+        projectInstructionsRuntime,
         skills: skillCatalog.skills,
         costTracker,
       });

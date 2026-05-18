@@ -303,7 +303,7 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - mock transport 新增 `NOVA_MOCK_SCENARIO=agent-loop`，新增 QueryEngine 单测与 M11 e2e 子进程验证
 - 详见 `docs/design/M11-agent-tool.md`、使用手册 `docs/manual/M11-usage-guide.md`、实现架构 `docs/architecture/M11-architecture.md`
 
-### M12 — `.claude/rules` 逻辑
+### M12 — `.claude/rules` 逻辑 ✅（已完成）
 
 把 claude-code 的 rules-as-instructions 机制纳入 project instructions：`.claude/rules/**/*.md` 不是权限规则，而是可拆分、可按路径生效的项目指令。
 
@@ -319,6 +319,16 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 明确区分 `.claude/rules/*.md` 的“模型行为指令”和 M3 `permissions.json` 的“工具权限规则”。
 
 **DoD**：在 `src/**/*.ts` 专属 rule 存在时，模型只有处理匹配文件才看到该 rule；非匹配任务不污染 system prompt。
+
+**交付摘要**：
+- 新增 `ProjectInstructionsRuntime`，统一持有 CLAUDE.md、eager rules 与 path-scoped rules 激活状态
+- 递归扫描从 git root 到 cwd 的 `.claude/rules/**/*.md`；无 `paths` frontmatter 的 rule 随会话启动 eager load
+- 支持 `paths` 字符串 / inline array / YAML list 子集；匹配基于 rule 所在 `.claude` 父目录的相对路径与 `Bun.Glob.match()`
+- `FileRead` / `FileEdit` / `FileWrite` 成功处理匹配文件后激活对应 rule；QueryEngine 每轮重建 system prompt，保证首轮不污染、次轮可见
+- rule 内容复用 M4 `@include` 与块级 HTML comment strip，且进入模型前剥离 frontmatter
+- Hooks 扩展 `InstructionsLoaded` 事件，提供 `session_start` / `path_glob_match` / `include` 等 load reason 审计输入
+- 测试：新增 projectInstructions 单测、QueryEngine path-rule 集成测试、`m12-e2e-rules` 子进程验证
+- 详见 `docs/design/M12-rules.md`、使用手册 `docs/manual/M12-usage-guide.md`、实现架构 `docs/architecture/M12-architecture.md`
 
 ### M13 — 插件系统
 
@@ -612,6 +622,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.17**（2026-05-17）：M12 `.claude/rules` 逻辑落地。新增 `ProjectInstructionsRuntime`，支持递归扫描 `.claude/rules/**/*.md`、无 `paths` 规则 eager load、带 `paths` 规则在 FileRead/FileEdit/FileWrite 命中文件后延迟激活；规则内容复用 @include 与 HTML comment strip 并剥离 frontmatter；Hooks 扩展 `InstructionsLoaded` 审计事件；新增 M12 设计文档 / 使用手册 / 架构快照。
 - **v2.16**（2026-05-17）：进入 M12 前重排 Phase 2 roadmap：新增 M12 `.claude/rules` 逻辑、M13 插件系统、M14 Prompt 附件与 @-mention 上下文注入、M15 Plan Mode 一等运行模式；原 M12 多 Provider / M13 TUI / M14 Resume-Save-Share / M14.5 重构窗口顺延为 M16 / M17 / M18 / M18.5，并同步更新 Phase 2 总览、依赖图与重构窗口说明。
 - **v2.15**（2026-05-17）：M11 AgentTool 子 agent 派生落地。新增 `src/tools/AgentTool` 与 `SubAgentRuntime` 注入，支持模型通过 `Agent` 工具启动同步 one-shot 子 agent；子 agent 复用父会话配置、权限、hooks 与 cwd，父上下文文本化注入，父 agent 只收到最终摘要；支持 `general-purpose` / `explore` 两个轻量类型并禁止递归 Agent；mock transport 新增 `agent-loop`，新增 M11 设计文档 / 使用手册 / 架构快照。
 - **v2.14**（2026-05-17）：M10 Hooks 系统落地。新增 `src/services/hooks`，支持 `PreToolUse` / `PostToolUse` command hooks；配置写入 `~/.nova-code/config.json` 的 `hooks` 字段，支持 matcher、轻量 `if` 条件、超时、stdin JSON 协议、exit code 2 阻断、stdout JSON `updatedInput` / `updatedOutput`；QueryEngine 在权限系统前执行 PreToolUse、工具执行后执行 PostToolUse；新增 `hook_result` AgentEvent 与 ask/chat 渲染；新增 M10 设计文档 / 使用手册 / 架构快照；全量 706 tests 通过。

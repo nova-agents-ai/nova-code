@@ -31,6 +31,7 @@ import { compactConversation } from "../../services/compact/compact.ts";
 import type { HooksConfig } from "../../services/hooks/types.ts";
 import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import type { ProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import type { Tool } from "../../Tool.ts";
 import {
   type AgentEvent,
@@ -73,10 +74,11 @@ export interface ChatTurnContext {
   readonly permissionStore?: PermissionStore;
   readonly permissionProvider?: PermissionProvider;
   readonly cwd?: string;
-  // ── M4 Compact 注入（全部可选，透传给 runAgentLoop）─────────────────────
+  // ── M4 Compact / M12 Project Instructions 注入（全部可选）───────────────
   readonly autoCompactEnabled?: boolean;
   readonly autoCompactTracking?: AutoCompactTrackingState;
   readonly projectInstructions?: string;
+  readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   // ── M10 Hooks 注入（透传给 runAgentLoop）───────────────────────────────
   readonly hooks?: HooksConfig;
 }
@@ -85,8 +87,8 @@ export interface ChatTurnContext {
  * /compact 斜杠命令调用 ChatSession.compact() 时的上下文。
  *
  * 设计动机：与 sendTurn 用同一个 ChatTurnContext 太重 —— compact 不需要
- * tools / permissionStore / projectInstructions（compact 调用本身不带工具），
- * 单独定义专用 ctx 更清晰。
+ * 权限相关字段；system prompt / projectInstructions / tools 只作为 forked-agent
+ * prompt cache 共享输入按需传入。
  */
 export interface ChatCompactContext {
   readonly config: ResolvedConfig;
@@ -94,7 +96,7 @@ export interface ChatCompactContext {
   readonly llmLogSink?: LlmLogSink;
   /** Forked-agent cache 共享：与主循环相同的 system prompt。 */
   readonly systemPrompt?: string;
-  /** Forked-agent cache 共享：启动时加载好的 CLAUDE.md / project instructions。 */
+  /** Forked-agent cache 共享：调用方已合并好的静态 project instructions。 */
   readonly projectInstructions?: string;
   /** Forked-agent cache 共享：与主循环相同的工具定义。 */
   readonly tools?: readonly Tool[];
@@ -161,6 +163,9 @@ export class ChatSession {
         : {}),
       ...(ctx.projectInstructions !== undefined
         ? { projectInstructions: ctx.projectInstructions }
+        : {}),
+      ...(ctx.projectInstructionsRuntime !== undefined
+        ? { projectInstructionsRuntime: ctx.projectInstructionsRuntime }
         : {}),
       ...(ctx.hooks !== undefined ? { hooks: ctx.hooks } : {}),
       sessionId: this._meta.sessionId,
