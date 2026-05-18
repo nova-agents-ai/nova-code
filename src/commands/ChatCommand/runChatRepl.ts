@@ -28,6 +28,11 @@ import {
 } from "../../services/compact/autoCompact.ts";
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import {
+  formatPluginSlashListing,
+  type PluginSlashCommand,
+  resolvePluginSlashInvocation,
+} from "../../services/plugins/index.ts";
 import type { ProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import {
   formatSkillListingInstructions,
@@ -78,6 +83,8 @@ export interface RunChatReplParams {
   readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   /** M9：启动时加载好的 skill catalog；按 claude-code 方式只把名称/描述列表追加到 system prompt。 */
   readonly skills?: readonly LoadedSkill[];
+  /** M13：enabled plugins 提供的 custom slash commands。 */
+  readonly pluginSlashCommands?: readonly PluginSlashCommand[];
   /** M4：是否启用自动 compact，默认 true。配合 autoCompactTracking 才生效。 */
   readonly autoCompactEnabled?: boolean;
   /** M4：自动 compact tracking；不注入则 runChatRepl 自动构造一份。 */
@@ -120,6 +127,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     projectInstructions,
     projectInstructionsRuntime,
     skills,
+    pluginSlashCommands,
     costTracker,
   } = params;
   // M4: 自动 compact 默认开启；调用方可通过 autoCompactEnabled=false 关闭
@@ -229,6 +237,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     [
       `nova-code chat（session: ${session.meta.sessionId}, model: ${session.meta.model}）`,
       "输入 /help 查看命令；Ctrl+C 取消当前请求、双按退出；Ctrl+D 直接退出。",
+      formatPluginCommandsWelcome(pluginSlashCommands),
       "",
     ].join("\n"),
   );
@@ -264,10 +273,11 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         io.stderr(`[skill] ${skillSlashInvocation.message}\n`);
         continue;
       }
+      const pluginSlashInvocation = resolvePluginSlashInvocation(input, pluginSlashCommands);
 
       // M4: 为 /compact 这类需要发 LLM 调用的命令准备 chatRuntime；
       // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
-      if (skillSlashInvocation === undefined) {
+      if (skillSlashInvocation === undefined && pluginSlashInvocation === undefined) {
         const slashAbort = new AbortController();
         phaseRef.current = { kind: "streaming", abort: slashAbort };
         const currentTools = readCurrentTools();
@@ -308,7 +318,9 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
       }
 
       const turnInput =
-        skillSlashInvocation?.kind === "invoke" ? skillSlashInvocation.prompt : input;
+        skillSlashInvocation?.kind === "invoke"
+          ? skillSlashInvocation.prompt
+          : (pluginSlashInvocation?.prompt ?? input);
 
       // 走真实 agent loop
       const abortController = new AbortController();
@@ -350,6 +362,11 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     process.removeListener("SIGINT", processSigintHandler);
     rl.close();
   }
+}
+
+function formatPluginCommandsWelcome(commands: readonly PluginSlashCommand[] | undefined): string {
+  const listing = formatPluginSlashListing(commands ?? []);
+  return listing === undefined ? "" : `插件斜杠命令：\n${listing}`;
 }
 
 function recordCostEvent(

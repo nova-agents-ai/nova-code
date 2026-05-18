@@ -1,6 +1,6 @@
 # nova-code 仓库约定（给 AI 协作者看的指南）
 
-本文件给 AI 编码助手（Codex / Cursor / Copilot 等）阅读，目的是让你在改动本仓库时**保持一致性、避免破坏既有约定**。
+本文件给 AI 编码助手（Claude / Codex / Cursor / Copilot 等）阅读，目的是让你在改动本仓库时**保持一致性、避免破坏既有约定**。
 人类开发者请优先看 [README.md](./README.md)。
 
 ---
@@ -19,7 +19,7 @@ src/index.ts        库入口，只做 re-export，不写业务
 src/cli.ts          CLI 主流程：参数解析、--help/--version、命令分发、错误兜底
 src/commands.ts     所有内置子命令的实现集合
 biome.json          Biome lint+format 配置（项目唯一的 linter）
-tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，exclude Codex
+tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，exclude claude-code
 ```
 
 新增文件时遵循"一个文件一个主要实体"，工具函数按职责拆到独立模块，不要堆 `utils.ts` 大杂烩。

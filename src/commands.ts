@@ -18,6 +18,7 @@ import { costCommand } from "./commands/CostCommand/CostCommand.ts";
 import { helloCommand } from "./commands/HelloCommand/HelloCommand.ts";
 import { initCommand } from "./commands/InitCommand/InitCommand.ts";
 import { mcpCommand } from "./commands/McpCommand/McpCommand.ts";
+import { pluginCommand } from "./commands/PluginCommand/PluginCommand.ts";
 import { skillCommand } from "./commands/SkillCommand/SkillCommand.ts";
 import type { CommandDefinition } from "./commands/types.ts";
 
@@ -39,6 +40,7 @@ export const builtinCommands: readonly CommandDefinition[] = [
   initCommand,
   mcpCommand,
   skillCommand,
+  pluginCommand,
 ];
 
 /**

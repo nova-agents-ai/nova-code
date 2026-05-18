@@ -1,10 +1,11 @@
 /** M12 `.claude/rules` runtime: eager rules + path-scoped activation. */
 
 import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { executeHookBatch } from "../hooks/hookRunner.ts";
 import { HookEventName, type HooksConfig, type InstructionsLoadReason } from "../hooks/types.ts";
+import type { PluginRuleContribution } from "../plugins/types.ts";
 import {
   formatInstructionFiles,
   type GetProjectInstructionsParams,
@@ -19,6 +20,8 @@ export interface CreateProjectInstructionsRuntimeParams extends GetProjectInstru
   readonly hooks?: HooksConfig;
   readonly sessionId?: string;
   readonly signal?: AbortSignal;
+  /** M13：enabled plugins 提供的 instruction fragment/rules 目录。 */
+  readonly pluginRuleContributions?: readonly PluginRuleContribution[];
 }
 
 export interface ActivateProjectRulesParams {
@@ -52,10 +55,16 @@ export async function createProjectInstructionsRuntime(
 ): Promise<ProjectInstructionsRuntime> {
   const loaded = await loadBaseInstructionFiles(params);
   const eagerRules = await loadEagerProjectRules(params);
+  const eagerPluginRules = await loadPluginRules(params, false);
   const conditionalRules = await loadConditionalProjectRules(params);
+  const conditionalPluginRules = await loadPluginRules(params, true);
   const runtime = new DefaultProjectInstructionsRuntime(
-    [...loaded, ...eagerRules.flatMap((rule) => rule.files)],
-    conditionalRules,
+    [
+      ...loaded,
+      ...eagerRules.flatMap((rule) => rule.files),
+      ...eagerPluginRules.flatMap((rule) => rule.files),
+    ],
+    [...conditionalRules, ...conditionalPluginRules],
     params,
   );
 
@@ -177,7 +186,36 @@ async function loadProjectRulesForDirectory(
   visited: Set<string>,
 ): Promise<readonly ProjectRuleFile[]> {
   const rulesDir = join(dir, ".claude", "rules");
-  const rulePaths = await findRuleMarkdownFiles(rulesDir);
+  return await loadRulesFromPath({ rulesPath: rulesDir, baseDir: dir, conditionalRule, visited });
+}
+
+async function loadPluginRules(
+  params: CreateProjectInstructionsRuntimeParams,
+  conditionalRule: boolean,
+): Promise<readonly ProjectRuleFile[]> {
+  const rules: ProjectRuleFile[] = [];
+  const visited = new Set<string>();
+  for (const contribution of params.pluginRuleContributions ?? []) {
+    rules.push(
+      ...(await loadRulesFromPath({
+        rulesPath: contribution.rulesPath,
+        baseDir: contribution.baseDir,
+        conditionalRule,
+        visited,
+      })),
+    );
+  }
+  return rules;
+}
+
+async function loadRulesFromPath(params: {
+  readonly rulesPath: string;
+  readonly baseDir: string;
+  readonly conditionalRule: boolean;
+  readonly visited: Set<string>;
+}): Promise<readonly ProjectRuleFile[]> {
+  const { rulesPath, baseDir, conditionalRule, visited } = params;
+  const rulePaths = await findRuleMarkdownFiles(rulesPath);
   const rules: ProjectRuleFile[] = [];
 
   for (const rulePath of rulePaths) {
@@ -196,13 +234,18 @@ async function loadProjectRulesForDirectory(
       ...(isConditional ? { globs } : {}),
     });
     if (files.length === 0) continue;
-    rules.push({ path: resolve(rulePath), baseDir: dir, globs, files });
+    rules.push({ path: resolve(rulePath), baseDir, globs, files });
   }
 
   return rules;
 }
 
 async function findRuleMarkdownFiles(rulesDir: string): Promise<readonly string[]> {
+  const stats = await safeStat(rulesDir);
+  if (stats === undefined) return [];
+  if (stats.isFile()) return rulesDir.endsWith(".md") ? [rulesDir] : [];
+  if (!stats.isDirectory()) return [];
+
   let entries: Dirent<string>[];
   try {
     entries = await readdir(rulesDir, { withFileTypes: true });
@@ -225,6 +268,16 @@ async function findRuleMarkdownFiles(rulesDir: string): Promise<readonly string[
     }
   }
   return files;
+}
+
+async function safeStat(path: string): Promise<Awaited<ReturnType<typeof stat>> | undefined> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    const code = errnoCode(error);
+    if (code === "ENOENT" || code === "EACCES" || code === "ENOTDIR") return undefined;
+    throw error;
+  }
 }
 
 async function readRulePathGlobs(rulePath: string): Promise<readonly string[]> {

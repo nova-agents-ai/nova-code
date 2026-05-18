@@ -1,5 +1,6 @@
 /** `nova-code skill`：查看 M9 Skills catalog 与 skill 正文。 */
 
+import { loadPluginCatalog } from "../../services/plugins/index.ts";
 import type { LoadedSkill, SkillEnvironment } from "../../services/skills/index.ts";
 import { loadSkillCatalog } from "../../services/skills/index.ts";
 import type { CommandDefinition } from "../types.ts";
@@ -34,10 +35,18 @@ export async function runSkillCommand(
     return 1;
   }
 
-  const catalog = await loadSkillCatalog({
-    cwd: options.cwd ?? process.cwd(),
+  const cwd = options.cwd ?? process.cwd();
+  const pluginCatalog = await loadPluginCatalog({
+    cwd,
     ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
     ...(options.env !== undefined ? { env: options.env } : {}),
+  });
+  for (const warning of pluginCatalog.warnings) io.stderr(`[plugin] ${warning}\n`);
+  const catalog = await loadSkillCatalog({
+    cwd,
+    ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+    ...(options.env !== undefined ? { env: options.env } : {}),
+    extraRoots: pluginCatalog.skillRoots,
   });
   for (const warning of catalog.warnings) io.stderr(`[skill] ${warning}\n`);
 

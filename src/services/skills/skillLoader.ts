@@ -19,11 +19,16 @@ export interface LoadSkillCatalogParams {
   readonly cwd: string;
   readonly homeDir?: string;
   readonly env?: SkillEnvironment;
+  /** M13: enabled plugins can provide additional skill roots. */
+  readonly extraRoots?: readonly string[];
 }
 
 export async function loadSkillCatalog(params: LoadSkillCatalogParams): Promise<SkillCatalog> {
   const env = params.env ?? process.env;
-  const roots = resolveSkillRoots({ ...params, env });
+  const roots = uniqueRoots([
+    ...resolveSkillRoots({ ...params, env }),
+    ...(params.extraRoots ?? []),
+  ]);
   const warnings: string[] = [];
   const skills: LoadedSkill[] = [];
   const seenNames = new Set<string>();
