@@ -28,7 +28,7 @@
  * - `default`：所有 requiresApproval=true 的工具都走 ask
  * - `acceptEdits`：FileEdit/FileWrite 自动允许（ask 路径默认此模式），Bash 仍走 ask
  * - `bypassPermissions`：全部放行（`--dangerously-skip-permissions` 触发），但仍过 DENY_PATTERNS
- * - `plan`：占位保留，本次不实现（enum 留口为后续 plan 模式预留）
+ * - `plan`：计划获批前禁止 Bash/FileWrite/FileEdit，只允许读代码和产出计划
  */
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 

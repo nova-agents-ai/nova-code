@@ -63,6 +63,7 @@ import {
 } from "./services/permissions/PermissionProvider.ts";
 import { evaluatePermission } from "./services/permissions/permissionEngine.ts";
 import type { PermissionStore } from "./services/permissions/permissionStore.ts";
+import type { PlanModeRuntime } from "./services/plan/index.ts";
 import type { ProjectInstructionsRuntime } from "./services/projectInstructions/index.ts";
 import type { SubAgentRunParams, SubAgentRuntime, Tool } from "./Tool.ts";
 import { AGENT_TOOL_NAME, SubAgentTypeEnum } from "./tools/AgentTool/constants.ts";
@@ -197,6 +198,10 @@ export interface AgentLoopParams {
   readonly hooks?: HooksConfig;
   /** hook stdin JSON 中的 session_id；ask 可省略，chat 传入真实 sessionId。 */
   readonly sessionId?: string;
+
+  // ── M15 Plan Mode 注入 ────────────────────────────────────────────────
+  /** chat/ask 会话级 Plan Mode 状态机；缺省表示不启用一等 Plan Mode。 */
+  readonly planModeRuntime?: PlanModeRuntime;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
@@ -279,6 +284,7 @@ export async function* runAgentLoop(
       ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       toolNames,
       projectInstructions: mergeInstructionBlocks(
+        params.planModeRuntime?.getSystemInstructions(),
         params.projectInstructionsRuntime?.getInstructions(),
         params.projectInstructions,
       ),
@@ -374,6 +380,7 @@ export async function* runAgentLoop(
       parentMessages: messages.slice(0, -1),
       projectInstructionsRuntime: params.projectInstructionsRuntime,
       projectInstructions: params.projectInstructions,
+      planModeRuntime: params.planModeRuntime,
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -586,12 +593,14 @@ interface ExecuteToolsParams {
   readonly parentMessages: readonly NovaMessage[];
   readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   readonly projectInstructions?: string;
+  readonly planModeRuntime?: PlanModeRuntime;
 }
 
 /** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
 interface ToolDecision {
   readonly use: ToolUseBlock;
   readonly decision: "allow" | "deny";
+  readonly permissionMode?: PermissionMode;
   readonly denyReason?: string;
   readonly denyPrefix?: string;
 }
@@ -615,6 +624,7 @@ async function* executeToolsAndYieldEvents(
     parentMessages,
     projectInstructionsRuntime,
     projectInstructions,
+    planModeRuntime,
   } = params;
   const resolvedCwd = cwd ?? process.cwd();
   const subAgentRuntime = createSubAgentRuntime({
@@ -632,6 +642,7 @@ async function* executeToolsAndYieldEvents(
     parentMessages,
     projectInstructionsRuntime,
     projectInstructions,
+    planModeRuntime,
   });
 
   // 先按声明顺序发出所有 tool_call 事件（与原行为一致，便于 UI 先看到本轮工具列表）
@@ -670,8 +681,15 @@ async function* executeToolsAndYieldEvents(
     const effectiveUse =
       preHook.updatedInput === undefined ? use : { ...use, input: preHook.updatedInput };
 
-    // 未注入权限系统 → 全放行（兼容现有测试与 M1/M2 行为）
-    if (permissionMode === undefined || permissionStore === undefined) {
+    const effectivePermissionMode =
+      planModeRuntime?.getEffectivePermissionMode(permissionMode) ?? permissionMode;
+
+    // 未注入权限系统 → 全放行（兼容现有测试与 M1/M2 行为）；
+    // 例外：Plan Mode 即使没有 permissionStore，也必须能拦截写权工具。
+    if (
+      effectivePermissionMode === undefined ||
+      (permissionStore === undefined && effectivePermissionMode !== "plan")
+    ) {
       decisions.push({ use: effectiveUse, decision: "allow" });
       continue;
     }
@@ -679,16 +697,20 @@ async function* executeToolsAndYieldEvents(
     const tool = findTool(effectiveUse.name, tools);
     const requiresApproval = tool?.requiresApproval ?? false;
     const evalResult = evaluatePermission({
-      mode: permissionMode,
+      mode: effectivePermissionMode,
       toolName: effectiveUse.name,
       requiresApproval,
       input: effectiveUse.input,
-      rules: permissionStore.getMergedRules(),
+      rules: permissionStore?.getMergedRules() ?? [],
       cwd: resolvedCwd,
     });
 
     if (evalResult.decision === "allow") {
-      decisions.push({ use: effectiveUse, decision: "allow" });
+      decisions.push({
+        use: effectiveUse,
+        decision: "allow",
+        permissionMode: effectivePermissionMode,
+      });
       continue;
     }
 
@@ -736,7 +758,11 @@ async function* executeToolsAndYieldEvents(
 
     // 如果用户选了升级，把规则写回 store（session 只改内存；project/global 会写盘）
     let persisted: "session" | "project" | "global" | undefined;
-    if (outcome.decision === "allow" && outcome.persistTo !== undefined) {
+    if (
+      outcome.decision === "allow" &&
+      outcome.persistTo !== undefined &&
+      permissionStore !== undefined
+    ) {
       const rule = buildPersistedRule(effectiveUse.name, effectiveUse.input);
       if (rule !== undefined) {
         await permissionStore.addRule(outcome.persistTo, rule);
@@ -754,7 +780,11 @@ async function* executeToolsAndYieldEvents(
     };
 
     if (outcome.decision === "allow") {
-      decisions.push({ use: effectiveUse, decision: "allow" });
+      decisions.push({
+        use: effectiveUse,
+        decision: "allow",
+        permissionMode: effectivePermissionMode,
+      });
     } else {
       decisions.push({
         use: effectiveUse,
@@ -777,7 +807,14 @@ async function* executeToolsAndYieldEvents(
       if (d === undefined) {
         return Promise.reject(new Error("internal: missing decision entry"));
       }
-      return executeOneTool(d.use, tools, signal, subAgentRuntime);
+      return executeOneTool({
+        use: d.use,
+        tools,
+        signal,
+        subAgentRuntime,
+        permissionMode: d.permissionMode,
+        planModeRuntime,
+      });
     }),
   );
 
@@ -1008,6 +1045,7 @@ interface SubAgentRuntimeParams {
   readonly parentMessages: readonly NovaMessage[];
   readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   readonly projectInstructions?: string;
+  readonly planModeRuntime?: PlanModeRuntime;
 }
 
 interface SubAgentPromptParts {
@@ -1065,6 +1103,7 @@ async function runSubAgent(
     ...(runtime.projectInstructionsRuntime !== undefined
       ? { projectInstructionsRuntime: runtime.projectInstructionsRuntime }
       : {}),
+    ...(runtime.planModeRuntime !== undefined ? { planModeRuntime: runtime.planModeRuntime } : {}),
   });
   const { finalMessage, turns } = await collectSubAgentFinalMessage(generator);
   return { agentType, turns, summary: extractTextFromMessage(finalMessage) };
@@ -1075,6 +1114,7 @@ function resolveSubAgentType(value: string | undefined): SubAgentTypeEnum {
   if (value === SubAgentTypeEnum.GENERAL_PURPOSE || value === SubAgentTypeEnum.EXPLORE) {
     return value;
   }
+  if (value === SubAgentTypeEnum.PLAN) return value;
   return SubAgentTypeEnum.GENERAL_PURPOSE;
 }
 
@@ -1082,7 +1122,7 @@ function selectSubAgentTools(tools: readonly Tool[], agentType: SubAgentTypeEnum
   return tools.filter((tool) => {
     if (tool.name === AGENT_TOOL_NAME) return false;
     if (tool.name === TODO_WRITE_TOOL_NAME) return false;
-    if (agentType === SubAgentTypeEnum.EXPLORE) {
+    if (agentType === SubAgentTypeEnum.EXPLORE || agentType === SubAgentTypeEnum.PLAN) {
       return EXPLORE_SUB_AGENT_TOOL_NAMES.has(tool.name);
     }
     return true;
@@ -1098,7 +1138,7 @@ function buildSubAgentPromptParts(
   const typeHint =
     agentType === SubAgentTypeEnum.EXPLORE
       ? "You are in read-only exploration mode. Do not modify files or run mutating commands."
-      : "You may use the provided tools to complete the delegated task within scope.";
+      : getSubAgentTypeHint(agentType);
   return {
     systemPrompt:
       "You are a nova-code sub-agent spawned by a parent coding assistant. " +
@@ -1119,6 +1159,13 @@ function buildSubAgentPromptParts(
       "Return only the final report for the parent agent.",
     ].join("\n"),
   };
+}
+
+function getSubAgentTypeHint(agentType: SubAgentTypeEnum): string {
+  if (agentType === SubAgentTypeEnum.PLAN) {
+    return "You are in read-only planning mode. Produce a concrete implementation plan, but do not modify files or run mutating commands.";
+  }
+  return "You may use the provided tools to complete the delegated task within scope.";
 }
 
 function formatParentContext(messages: readonly NovaMessage[]): string {
@@ -1186,12 +1233,17 @@ function formatSubAgentSessionId(sessionId: string | undefined, description: str
   return suffix === "" ? `${base}:agent` : `${base}:agent:${suffix}`;
 }
 
-async function executeOneTool(
-  use: ToolUseBlock,
-  tools: readonly Tool[],
-  signal: AbortSignal,
-  subAgentRuntime: SubAgentRuntime,
-): Promise<string> {
+interface ExecuteOneToolParams {
+  readonly use: ToolUseBlock;
+  readonly tools: readonly Tool[];
+  readonly signal: AbortSignal;
+  readonly subAgentRuntime: SubAgentRuntime;
+  readonly permissionMode?: PermissionMode;
+  readonly planModeRuntime?: PlanModeRuntime;
+}
+
+async function executeOneTool(params: ExecuteOneToolParams): Promise<string> {
+  const { use, tools, signal, subAgentRuntime, permissionMode, planModeRuntime } = params;
   const tool = findTool(use.name, tools);
   if (tool === undefined) {
     throw new ToolExecutionError(
@@ -1199,7 +1251,12 @@ async function executeOneTool(
       `Unknown tool '${use.name}'. Available tools: ${tools.map((t) => t.name).join(", ") || "(none)"}.`,
     );
   }
-  return await tool.execute(use.input, { signal, subAgentRuntime });
+  return await tool.execute(use.input, {
+    signal,
+    subAgentRuntime,
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
+    ...(planModeRuntime !== undefined ? { planModeRuntime } : {}),
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────

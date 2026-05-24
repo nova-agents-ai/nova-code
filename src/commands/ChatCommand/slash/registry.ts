@@ -10,6 +10,7 @@ import { exitCommand } from "./exit.ts";
 import { makeHelpCommand } from "./help.ts";
 import { loadCommand } from "./load.ts";
 import { permissionsCommand } from "./permissions.ts";
+import { planCommand } from "./plan.ts";
 import { saveCommand } from "./save.ts";
 import type { SlashCommand } from "./types.ts";
 
@@ -20,6 +21,7 @@ const nonHelpCommands: readonly SlashCommand[] = [
   saveCommand,
   loadCommand,
   permissionsCommand,
+  planCommand,
   compactCommand,
 ];
 

@@ -12,7 +12,8 @@ export type MockScenario =
   | "mcp-loop"
   | "skill-loop"
   | "agent-loop"
-  | "rules-loop";
+  | "rules-loop"
+  | "plan-loop";
 
 interface MockAnthropicClientOptions {
   readonly scenario: MockScenario;
@@ -149,7 +150,45 @@ function buildTurn(scenario: MockScenario, body: MockRequestBody): MockTurnPlan 
     return buildRulesLoopTurn(body);
   }
 
+  if (scenario === "plan-loop") {
+    return buildPlanLoopTurn(body);
+  }
+
   return buildEditLoopTurn(body);
+}
+
+function buildPlanLoopTurn(body: MockRequestBody): MockTurnPlan {
+  const resultCount = countToolResults(body.messages);
+  if (resultCount === 0) {
+    return {
+      leadingText: "Preparing a plan for approval...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Preparing a plan for approval..."),
+        makeToolUseContent("toolu_plan_01", "ExitPlanMode", {
+          plan: "1. Create plan-output.txt with the approved marker.\n2. Report completion.",
+        }),
+      ],
+    };
+  }
+  if (resultCount === 1) {
+    return {
+      leadingText: "Implementing the approved plan...",
+      stopReason: "tool_use",
+      content: [
+        ...makeTextContent("Implementing the approved plan..."),
+        makeToolUseContent("toolu_plan_02", "FileWrite", {
+          path: "plan-output.txt",
+          content: "M15_PLAN_APPROVED\n",
+        }),
+      ],
+    };
+  }
+  return {
+    leadingText: "Done. Plan approved and implemented.",
+    stopReason: "end_turn",
+    content: makeTextContent("Done. Plan approved and implemented."),
+  };
 }
 
 function buildRulesLoopTurn(body: MockRequestBody): MockTurnPlan {

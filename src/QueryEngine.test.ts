@@ -26,10 +26,12 @@ import { buildSystemPrompt, runAgentLoop } from "./QueryEngine.ts";
 import { HookCommandType } from "./services/hooks/types.ts";
 import type { PermissionProvider } from "./services/permissions/PermissionProvider.ts";
 import { PermissionStore } from "./services/permissions/permissionStore.ts";
+import { createPlanModeRuntime } from "./services/plan/index.ts";
 import { createProjectInstructionsRuntime } from "./services/projectInstructions/index.ts";
 import type { Tool } from "./Tool.ts";
 import { AgentTool } from "./tools/AgentTool/AgentTool.ts";
 import { AGENT_TOOL_NAME } from "./tools/AgentTool/constants.ts";
+import { ExitPlanModeTool } from "./tools.ts";
 import { type AgentEvent, AgentStopReasonEnum, MessageRoleEnum } from "./types/message.ts";
 import type { PermissionRule, UserChoice } from "./types/permissions.ts";
 
@@ -1031,6 +1033,20 @@ function makeBashTool(requiresApproval: boolean): Tool {
   };
 }
 
+function makeFileWriteProbeTool(): Tool {
+  return {
+    name: "FileWrite",
+    description: "probe file write",
+    input_schema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+    },
+    execute: () => "write executed",
+    requiresApproval: false,
+  };
+}
+
 function makeInMemoryStore(initialRules: readonly PermissionRule[] = []): PermissionStore {
   return new PermissionStore({
     cwd: "/tmp/nova-test",
@@ -1270,5 +1286,79 @@ describe("runAgentLoop - M3 权限注入", () => {
     expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("deny");
     const toolResults = events.filter((e) => e.type === "tool_result");
     expect((toolResults[0] as AgentEvent & { type: "tool_result" }).isError).toBe(true);
+  });
+
+  test("plan 模式：批准前 Bash 被拦截，即使没有 permissionStore", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_1", name: "Bash", input: { command: "echo should-not-run" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hi",
+        tools: [makeBashTool(false)],
+        client,
+        permissionMode: "plan",
+      }),
+    );
+
+    const decisions = events.filter((e) => e.type === "permission_decision");
+    expect((decisions[0] as AgentEvent & { type: "permission_decision" }).decision).toBe("deny");
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    const result = toolResults[0] as AgentEvent & { type: "tool_result" };
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("plan mode blocks");
+  });
+
+  test("ExitPlanMode 获批后，同一 loop 后续工具按进入前模式执行", async () => {
+    const planRuntime = createPlanModeRuntime({
+      approvalProvider: {
+        requestPlanApproval: async () => ({ decision: "approved" }),
+      },
+    });
+    planRuntime.enter({ previousPermissionMode: "default" });
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [
+          {
+            id: "tu_plan",
+            name: "ExitPlanMode",
+            input: { plan: "1. update code\n2. run tests" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu_write", name: "FileWrite", input: { path: "a.ts" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+
+    const events = await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "plan then implement",
+        tools: [ExitPlanModeTool, makeFileWriteProbeTool()],
+        client,
+        permissionMode: "plan",
+        planModeRuntime: planRuntime,
+      }),
+    );
+
+    const toolResults = events.filter(
+      (event): event is Extract<AgentEvent, { type: "tool_result" }> =>
+        event.type === "tool_result",
+    );
+    expect(toolResults.map((event) => event.isError)).toEqual([false, false]);
+    expect(toolResults[1]?.content).toBe("write executed");
   });
 });

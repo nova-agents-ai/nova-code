@@ -10,26 +10,29 @@
  *    Bash 命令命中内置灾难模式（rm -rf /、dd to disk、mkfs、sudo、curl|sh …）
  *    → deny。**连 bypassPermissions 也不能绕过此步**（深度防御）。
  *
- * 2. bypassPermissions mode
+ * 2. plan mode
+ *    Plan Mode 下，Bash / FileWrite / FileEdit 在计划获批前一律 deny。
+ *
+ * 3. bypassPermissions mode
  *    `--dangerously-skip-permissions` 开启时，除 DENY_PATTERNS 外全部 allow。
  *
- * 3. deny 规则（三层汇总，不按 source 优先级）
+ * 4. deny 规则（三层汇总，不按 source 优先级）
  *    任何 source 里出现 deny 都是最高优先级；命中即 deny。
  *    安全从严：用户在任何一层明确 deny 都应立即生效。
  *
- * 4. allow / ask 规则（session > project > global，同 source 先到先胜）
+ * 5. allow / ask 规则（session > project > global，同 source 先到先胜）
  *    在同一 source 内按规则列表顺序遍历，第一个 behavior 非 deny 的命中就返回。
  *    - behavior === "allow" → allow
  *    - behavior === "ask"   → ask（即使工具 requiresApproval=false 也强制询问）
  *
- * 5. acceptEdits mode
+ * 6. acceptEdits mode
  *    模式为 acceptEdits 且工具是 FileWrite/FileEdit → allow。
  *    这是 Ask headless 默认模式：文件编辑自动放行，Bash/其它仍走后续步。
  *
- * 6. requiresApproval=true
+ * 7. requiresApproval=true
  *    工具声明需要审批 → ask。
  *
- * 7. 默认（requiresApproval=false / 未设置）
+ * 8. 默认（requiresApproval=false / 未设置）
  *    只读工具自动 allow。
  *
  * ─── 与 claude-code 的差异 ────────────────────────────────────────────
@@ -134,12 +137,20 @@ function evaluatePermissionImpl(input: PermissionEvaluationInput): PermissionEva
     }
   }
 
-  // ── Step 2: bypassPermissions
+  // ── Step 2: plan mode blocks write-capable tools before approval
+  if (mode === "plan" && isPlanBlockedToolName(toolName)) {
+    return {
+      decision: "deny",
+      reason: "plan mode blocks write-capable tools before approval",
+    };
+  }
+
+  // ── Step 3: bypassPermissions
   if (mode === "bypassPermissions") {
     return { decision: "allow", reason: "bypassPermissions mode" };
   }
 
-  // ── Step 3: deny 规则（三层不分优先级）
+  // ── Step 4: deny 规则（三层不分优先级）
   for (const entry of rules) {
     if (entry.rule.behavior !== "deny") continue;
     if (!matchRule(entry.rule, toolName, toolInput, cwd)) continue;
@@ -150,7 +161,7 @@ function evaluatePermissionImpl(input: PermissionEvaluationInput): PermissionEva
     };
   }
 
-  // ── Step 4: allow / ask 规则（session > project > global）
+  // ── Step 5: allow / ask 规则（session > project > global）
   const SOURCE_ORDER: readonly PermissionRuleSource[] = ["session", "project", "global"];
   for (const source of SOURCE_ORDER) {
     for (const entry of rules) {
@@ -165,17 +176,17 @@ function evaluatePermissionImpl(input: PermissionEvaluationInput): PermissionEva
     }
   }
 
-  // ── Step 5: acceptEdits mode
+  // ── Step 6: acceptEdits mode
   if (mode === "acceptEdits" && isFileWriteToolName(toolName)) {
     return { decision: "allow", reason: "acceptEdits mode: file edits auto-approved" };
   }
 
-  // ── Step 6: requiresApproval
+  // ── Step 7: requiresApproval
   if (requiresApproval) {
     return { decision: "ask", reason: "tool requires approval" };
   }
 
-  // ── Step 7: 默认
+  // ── Step 8: 默认
   return { decision: "allow", reason: "tool does not require approval (read-only)" };
 }
 
@@ -209,4 +220,8 @@ function matchRule(rule: PermissionRule, toolName: string, input: unknown, cwd: 
 
   // 其它工具：ruleContent 空 → 匹配整个工具；非空 → 不匹配（语义无定义时从严）
   return rule.ruleContent === undefined || rule.ruleContent === "";
+}
+
+function isPlanBlockedToolName(toolName: string): boolean {
+  return toolName === BASH_TOOL_NAME || isFileWriteToolName(toolName);
 }

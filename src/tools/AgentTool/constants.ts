@@ -5,4 +5,5 @@ export const AGENT_TOOL_NAME = "Agent";
 export enum SubAgentTypeEnum {
   GENERAL_PURPOSE = "general-purpose",
   EXPLORE = "explore",
+  PLAN = "plan",
 }

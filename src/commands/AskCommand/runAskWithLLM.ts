@@ -23,6 +23,7 @@ import { createAutoCompactTrackingState } from "../../services/compact/autoCompa
 import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import { createPlanModeRuntime } from "../../services/plan/index.ts";
 import {
   loadPluginCatalog,
   mergeHooksConfig,
@@ -149,6 +150,11 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       ...(skillTool !== undefined ? [skillTool] : []),
       ...mcpRegistry.tools,
     ];
+    const initialPermissionMode =
+      options.dangerouslySkipPermissions === true ? "bypassPermissions" : "acceptEdits";
+    const planModeRuntime = createPlanModeRuntime({
+      initialPermissionMode,
+    });
     const autoCompactTracking = createAutoCompactTrackingState();
     logEvent("tengu_started", {
       command: "ask",
@@ -185,8 +191,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       // ask 默认 acceptEdits：FileWrite/FileEdit 直接放行（便于常见 "生成代码"
       // 场景），Bash 仍走规则判定→ask→headless deny
       // --dangerously-skip-permissions → bypassPermissions
-      permissionMode:
-        options.dangerouslySkipPermissions === true ? "bypassPermissions" : "acceptEdits",
+      permissionMode: initialPermissionMode,
       permissionStore,
       permissionProvider,
       cwd: process.cwd(),
@@ -197,6 +202,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       projectInstructionsRuntime,
       hooks: effectiveHooks,
       sessionId: "ask",
+      planModeRuntime,
     });
 
     for await (const event of generator) {

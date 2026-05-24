@@ -56,6 +56,8 @@ export {
   AgentTool,
   builtinTools,
   createSkillTool,
+  EnterPlanModeTool,
+  ExitPlanModeTool,
   FileReadTool,
   findTool,
   LSTool,

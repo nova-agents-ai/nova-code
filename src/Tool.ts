@@ -1,3 +1,6 @@
+import type { PlanModeRuntime } from "./services/plan/index.ts";
+import type { PermissionMode } from "./types/permissions.ts";
+
 /**
  * 工具系统的核心抽象。
  *
@@ -31,6 +34,10 @@ export interface ToolInputSchema {
  */
 export interface ToolExecutionContext {
   readonly signal: AbortSignal;
+  /** 当前工具执行时的有效权限模式；Plan Mode 工具用它记录进入前模式。 */
+  readonly permissionMode?: PermissionMode;
+  /** M15：Plan Mode 状态机，供 EnterPlanMode / ExitPlanMode 工具切换状态。 */
+  readonly planModeRuntime?: PlanModeRuntime;
   readonly subAgentRuntime?: SubAgentRuntime;
 }
 

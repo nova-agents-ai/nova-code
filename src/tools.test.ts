@@ -14,6 +14,8 @@ import {
   AgentTool,
   BashTool,
   builtinTools,
+  EnterPlanModeTool,
+  ExitPlanModeTool,
   FileEditTool,
   FileReadTool,
   FileWriteTool,
@@ -27,7 +29,7 @@ import {
 } from "./tools.ts";
 
 describe("builtinTools 注册表", () => {
-  test("包含 M11 全部 11 个工具", () => {
+  test("包含 M15 全部 13 个工具", () => {
     const names = builtinTools.map((t) => t.name);
     expect(names).toContain("LS");
     expect(names).toContain("FileRead");
@@ -40,6 +42,8 @@ describe("builtinTools 注册表", () => {
     expect(names).toContain("Agent");
     expect(names).toContain("WebFetch");
     expect(names).toContain("WebSearch");
+    expect(names).toContain("EnterPlanMode");
+    expect(names).toContain("ExitPlanMode");
   });
 
   test("findTool 按名严格查找", () => {
@@ -75,6 +79,8 @@ describe("工具命名一致性 smoke test（v2.2 评审 · 代码质量 Issue #
     { tool: AgentTool, expectedName: "Agent" },
     { tool: WebFetchTool, expectedName: "WebFetch" },
     { tool: WebSearchTool, expectedName: "WebSearch" },
+    { tool: EnterPlanModeTool, expectedName: "EnterPlanMode" },
+    { tool: ExitPlanModeTool, expectedName: "ExitPlanMode" },
   ];
 
   test("name 字段非空且为字符串", () => {

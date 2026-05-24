@@ -4,14 +4,16 @@
  * 与 claude-code 顶层 src/tools.ts 对齐 —— 注册表在顶层，具体实现在
  * src/tools/<ToolName>/<ToolName>.ts。
  *
- * M11 完整内置工具集（11 个）：
+ * M15 完整内置工具集（13 个）：
  * - LS / FileRead / FileWrite / FileEdit / Bash / Grep / Glob / TodoWrite
- * - Agent / WebFetch / WebSearch
+ * - Agent / WebFetch / WebSearch / EnterPlanMode / ExitPlanMode
  */
 
 import type { Tool } from "./Tool.ts";
 import { AgentTool } from "./tools/AgentTool/AgentTool.ts";
 import { BashTool } from "./tools/BashTool/BashTool.ts";
+import { EnterPlanModeTool } from "./tools/EnterPlanModeTool/EnterPlanModeTool.ts";
+import { ExitPlanModeTool } from "./tools/ExitPlanModeTool/ExitPlanModeTool.ts";
 import { FileEditTool } from "./tools/FileEditTool/FileEditTool.ts";
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.ts";
 import { FileWriteTool } from "./tools/FileWriteTool/FileWriteTool.ts";
@@ -39,6 +41,8 @@ export const builtinTools: readonly Tool[] = [
   AgentTool,
   WebFetchTool,
   WebSearchTool,
+  EnterPlanModeTool,
+  ExitPlanModeTool,
 ];
 
 /**
@@ -60,6 +64,8 @@ export {
   AgentTool,
   BashTool,
   createSkillTool,
+  EnterPlanModeTool,
+  ExitPlanModeTool,
   FileEditTool,
   FileReadTool,
   FileWriteTool,
