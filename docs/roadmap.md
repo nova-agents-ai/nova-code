@@ -357,7 +357,7 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 测试：新增插件 service/CLI 单测与 `m13-e2e-plugins` 子进程验证，覆盖 skill、slash command、hook、path-scoped rule 和禁用消失
 - 详见 `docs/design/M13-plugins.md`、使用手册 `docs/manual/M13-usage-guide.md`、实现架构 `docs/architecture/M13-architecture.md`
 
-### M14 — Prompt 附件与 @-mention 上下文注入
+### M14 — Prompt 附件与 @-mention 上下文注入 ✅（已完成）
 
 把用户输入从纯文本升级为“prompt + attachments”：支持用户显式引用文件、目录、MCP resource、图片/粘贴内容，并把这些上下文作为结构化附件注入模型。
 
@@ -372,6 +372,16 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - headless / REPL 两条路径共享同一个 attachment resolver。
 
 **DoD**：用户输入 `请重构 @src/cli.ts 并遵守相关规则` 时，模型能看到文件内容、匹配的 path-scoped rules、去重后的附件摘要，而不是只看到字面量 `@src/cli.ts`。
+
+**交付摘要**：
+- 新增 `src/services/attachments/`：共享 parser/resolver/types，ask/headless 与 chat/REPL 两条路径统一解析 prompt attachments
+- 支持 bare `@path`、`@file:` / `@file(...)`、`@dir:` / `@dir(...)`、`@glob:` / `@glob(...)`、`@MCP__server__resource`，并按文件绝对路径与 mention key 去重
+- 文件附件读取文本内容，目录附件生成直接子项摘要，glob 限量读取匹配文件，图片文件注入 `image` content block，超大内容按固定 budget 截断
+- `ProjectInstructionsRuntime` 扩展 `activateForPath()`；附件命中文件路径时在首轮 LLM 请求前激活 M12 path-scoped rules
+- MCP stdio / HTTP client 与 registry 扩展 `resources/read`，让 prompt 可引用 MCP resource
+- `QueryEngine` 新增 `userMessageContent` 入口，`NovaContentBlock` 扩展 `ImageBlock`，compact/partialCompact 同步支持 image block
+- 测试：新增附件 parser/resolver 单测、MCP resource bridge 单测、QueryEngine 结构化 content 单测、`m14-e2e-attachments` 子进程验证
+- 详见 `docs/design/M14-attachments.md`、使用手册 `docs/manual/M14-usage-guide.md`、实现架构 `docs/architecture/M14-architecture.md`
 
 ### M15 — Plan Mode 作为一等运行模式
 
@@ -514,7 +524,7 @@ Phase 3 不预设具体顺序。
                   M13 Plugins ✅
                          │
                          ▼
-             M14 Attachments / @-mention
+             M14 Attachments / @-mention ✅
                          │
                          ▼
                     M15 Plan Mode
@@ -632,6 +642,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.19**（2026-05-19）：M14 Prompt 附件与 @-mention 上下文注入落地。新增 `src/services/attachments`，ask/chat 共享解析 `@file` / `@dir` / `@glob` / `@MCP__server__resource`；文件、目录摘要、glob、图片与 MCP resource 作为结构化 user content 注入模型；`ProjectInstructionsRuntime.activateForPath()` 让附件命中文件路径时首轮激活 M12 path-scoped rules；MCP stdio / HTTP client 与 registry 扩展 `resources/read`；`QueryEngine` 支持 `userMessageContent` 与 `ImageBlock`；新增 M14 设计文档 / 使用手册 / 架构快照。
 - **v2.18**（2026-05-18）：M13 插件系统落地。新增本地插件发现与 `plugin.json` manifest 校验，支持 `.nova-code/plugins/` 与 `~/.nova-code/plugins/`；新增 `nova-code plugin list|enable|disable|reload|validate` 与 `PersistedConfig.plugins` 信任/启用状态；插件可贡献 skills、`/plugin:command` custom slash commands、hooks、MCP servers 与 path-scoped rules；ask/chat 启动时把插件贡献项合并进既有 M8/M9/M10/M12 子系统；新增 M13 设计文档 / 使用手册 / 架构快照。
 - **v2.17**（2026-05-17）：M12 `.claude/rules` 逻辑落地。新增 `ProjectInstructionsRuntime`，支持递归扫描 `.claude/rules/**/*.md`、无 `paths` 规则 eager load、带 `paths` 规则在 FileRead/FileEdit/FileWrite 命中文件后延迟激活；规则内容复用 @include 与 HTML comment strip 并剥离 frontmatter；Hooks 扩展 `InstructionsLoaded` 审计事件；新增 M12 设计文档 / 使用手册 / 架构快照。
 - **v2.16**（2026-05-17）：进入 M12 前重排 Phase 2 roadmap：新增 M12 `.claude/rules` 逻辑、M13 插件系统、M14 Prompt 附件与 @-mention 上下文注入、M15 Plan Mode 一等运行模式；原 M12 多 Provider / M13 TUI / M14 Resume-Save-Share / M14.5 重构窗口顺延为 M16 / M17 / M18 / M18.5，并同步更新 Phase 2 总览、依赖图与重构窗口说明。

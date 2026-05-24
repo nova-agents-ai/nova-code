@@ -81,6 +81,18 @@ export interface McpListToolsResult {
   readonly nextCursor?: string;
 }
 
+export interface McpResourceContent {
+  readonly uri: string;
+  readonly mimeType?: string;
+  readonly text?: string;
+  readonly blob?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface McpReadResourceResult {
+  readonly contents: readonly McpResourceContent[];
+}
+
 export interface McpContentBlock {
   readonly type: string;
   readonly text?: string;
@@ -118,6 +130,7 @@ export interface McpClient {
     args: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<McpCallToolResult>;
+  readResource(uri: string, signal?: AbortSignal): Promise<McpReadResourceResult>;
   onNotification(listener: McpNotificationListener): () => void;
   close(): Promise<void>;
 }

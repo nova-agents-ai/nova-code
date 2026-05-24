@@ -5,10 +5,12 @@ import { ToolExecutionError } from "../../errors/index.ts";
 import type { Tool } from "../../Tool.ts";
 import { McpStdioClient } from "./McpStdioClient.ts";
 import { McpStreamableHttpClient } from "./McpStreamableHttpClient.ts";
+import { McpProtocolError } from "./protocol.ts";
 import type {
   McpCallToolResult,
   McpClient,
   McpDiscoveredServer,
+  McpReadResourceResult,
   McpServerConfig,
   McpServersConfig,
   McpToolDefinition,
@@ -22,6 +24,11 @@ export interface McpToolRegistry {
   readonly tools: readonly Tool[];
   readonly warnings: readonly string[];
   readonly servers: readonly McpDiscoveredServer[];
+  readonly readResource: (
+    serverName: string,
+    uri: string,
+    signal?: AbortSignal,
+  ) => Promise<McpReadResourceResult>;
   readonly waitForPendingRefreshes: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
@@ -126,6 +133,13 @@ export async function createMcpToolRegistryFromServers(
           : {}),
       }));
     },
+    readResource: async (serverName, uri, signal) => {
+      const server = findConnectedServer(connected, serverName);
+      if (server === undefined) {
+        throw new McpProtocolError(`MCP server '${serverName}' is not connected.`);
+      }
+      return await server.client.readResource(uri, signal);
+    },
     waitForPendingRefreshes: async () => {
       await Promise.allSettled(
         connected
@@ -147,6 +161,15 @@ export async function createMcpToolRegistryFromServers(
 
 export function buildMcpToolName(serverName: string, toolName: string): string {
   return `${MCP_TOOL_PREFIX}__${sanitizeToolNamePart(serverName)}__${sanitizeToolNamePart(toolName)}`;
+}
+
+function findConnectedServer(
+  connected: readonly ConnectedServer[],
+  serverName: string,
+): ConnectedServer | undefined {
+  return connected.find(
+    (server) => server.name === serverName || sanitizeToolNamePart(server.name) === serverName,
+  );
 }
 
 async function runRefreshLoop(

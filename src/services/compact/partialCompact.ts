@@ -235,6 +235,14 @@ function toSdkMessageParam(message: NovaMessage): SdkMessageParam {
         ? message.content
         : message.content.map((block) => {
             if (block.type === "text") return { type: "text" as const, text: block.text };
+            if (block.type === "image") {
+              // Same rationale as compact.ts: don't resend base64 to the
+              // partial-compact LLM call.
+              return {
+                type: "text" as const,
+                text: `[image attachment elided for compact: ${block.source.media_type}, ${block.source.data.length} base64 chars]`,
+              };
+            }
             if (block.type === "tool_use") {
               return {
                 type: "tool_use" as const,

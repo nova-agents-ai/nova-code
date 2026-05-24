@@ -378,10 +378,24 @@ function extractLastUserText(messages: MockRequestBody["messages"]): string | un
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message === undefined || message.role !== "user") continue;
-    if (typeof message.content !== "string") return undefined;
-    return message.content;
+    return extractTextFromContent(message.content);
   }
   return undefined;
+}
+
+function extractTextFromContent(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const chunks: string[] = [];
+  for (const block of content) {
+    if (!isObject(block)) continue;
+    if (block["type"] === "text" && typeof block["text"] === "string") {
+      chunks.push(block["text"]);
+    } else if (block["type"] === "image") {
+      chunks.push("[image]");
+    }
+  }
+  return chunks.length === 0 ? undefined : chunks.join("\n");
 }
 
 function extractLastToolResultText(messages: MockRequestBody["messages"]): string | undefined {

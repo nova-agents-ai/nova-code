@@ -761,6 +761,26 @@ describe("runAgentLoop - initialMessages（多轮 REPL 支持）", () => {
     expect(calls[0]?.messages).toEqual([{ role: "user", content: "hello" }]);
   });
 
+  test("传 userMessageContent：首轮 user message 使用结构化附件内容", async () => {
+    const { client, calls } = makeFakeClient([{ textChunks: ["ok"], stopReason: "end_turn" }]);
+    const userMessageContent = [
+      { type: "text", text: "review @src/a.ts" },
+      { type: "text", text: '<attachment type="file">content</attachment>' },
+    ] as const;
+
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "review @src/a.ts",
+        userMessageContent,
+        tools: [],
+        client,
+      }),
+    );
+
+    expect(calls[0]?.messages).toEqual([{ role: "user", content: userMessageContent }]);
+  });
+
   test("传 initialMessages：历史消息被完整前置到请求 messages，userPrompt 追加在末尾", async () => {
     const { client, calls } = makeFakeClient([
       { textChunks: ["acknowledged"], stopReason: "end_turn" },

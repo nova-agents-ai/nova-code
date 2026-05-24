@@ -69,6 +69,8 @@ export interface ChatTurnContext {
    * 由 ChatCommand 创建并透传；ChatSession 原样转交给 runAgentLoop。
    */
   readonly llmLogSink?: LlmLogSink;
+  /** M14：当前 user turn 的结构化 prompt + attachments 内容。 */
+  readonly userMessageContent?: NovaMessage["content"];
   // ── M3 权限系统注入（全部可选，透传给 runAgentLoop）────────────────────
   readonly permissionMode?: PermissionMode;
   readonly permissionStore?: PermissionStore;
@@ -133,10 +135,11 @@ export class ChatSession {
    * 详见文件头设计说明。
    */
   async *sendTurn(userInput: string, ctx: ChatTurnContext): AsyncGenerator<AgentEvent, void, void> {
+    const userContent = ctx.userMessageContent ?? userInput;
     // 本轮的本地副本：成功收尾才回写到 this.messages
     const newMessages: NovaMessage[] = [
       ...this.messages,
-      { role: MessageRoleEnum.USER, content: userInput },
+      { role: MessageRoleEnum.USER, content: userContent },
     ];
     // 传给 runAgentLoop 的 initialMessages 必须不含本轮新 user（它内部会自己加）
     const initialMessages = [...this.messages];
@@ -145,6 +148,7 @@ export class ChatSession {
     const gen = agentLoop({
       config: ctx.config,
       userPrompt: userInput,
+      userMessageContent: userContent,
       initialMessages,
       tools: ctx.tools,
       signal: ctx.signal,

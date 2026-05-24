@@ -17,6 +17,8 @@ export type {
   McpInitializeResult,
   McpListToolsResult,
   McpNotificationListener,
+  McpReadResourceResult,
+  McpResourceContent,
   McpServerConfig,
   McpServersConfig,
   McpStdioServerConfig,

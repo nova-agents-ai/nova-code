@@ -12,6 +12,7 @@ import {
   parseCallToolResult,
   parseInitializeResult,
   parseListToolsResult,
+  parseReadResourceResult,
 } from "./protocol.ts";
 import type { McpClient, McpNotificationListener, McpStdioServerConfig } from "./types.ts";
 import {
@@ -19,6 +20,7 @@ import {
   type McpCallToolResult,
   type McpInitializeResult,
   type McpListToolsResult,
+  type McpReadResourceResult,
   type McpToolDefinition,
 } from "./types.ts";
 
@@ -132,6 +134,11 @@ export class McpStdioClient implements McpClient {
       { signal },
     );
     return parseCallToolResult(result, this.serverName, name);
+  }
+
+  async readResource(uri: string, signal?: AbortSignal): Promise<McpReadResourceResult> {
+    const result = await this.request("resources/read", { uri }, { signal });
+    return parseReadResourceResult(result, this.serverName, uri);
   }
 
   async close(): Promise<void> {

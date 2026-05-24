@@ -18,6 +18,7 @@ import { runAgentLoop } from "../../QueryEngine.ts";
 import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
+import { resolvePromptAttachments } from "../../services/attachments/index.ts";
 import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
@@ -129,6 +130,16 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       skillSlashInvocation?.kind === "invoke"
         ? skillSlashInvocation.prompt
         : (pluginSlashInvocation?.prompt ?? question);
+    const resolvedPrompt = await resolvePromptAttachments({
+      prompt: userPrompt,
+      cwd: process.cwd(),
+      signal: abortController.signal,
+      mcpRegistry,
+      projectInstructionsRuntime,
+    });
+    for (const warning of resolvedPrompt.warnings) {
+      process.stderr.write(`[attachment] ${warning}\n`);
+    }
 
     const skillListingInstructions = formatSkillListingInstructions(skillCatalog.skills);
     const runtimeInstructions = mergeInstructionBlocks(skillListingInstructions);
@@ -144,6 +155,8 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       model: config.model,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions === true,
       hasProjectInstructions: projectInstructionsRuntime.getInstructions() !== undefined,
+      attachmentCount: resolvedPrompt.attachments.length,
+      activatedAttachmentRuleCount: resolvedPrompt.activatedRules.length,
       skillCount: skillCatalog.skills.length,
       skillNames: skillCatalog.skills.map((skill) => skill.name).join(","),
       mcpToolCount: mcpRegistry.tools.length,
@@ -165,6 +178,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     const generator = runAgentLoop({
       config: effectiveConfig,
       userPrompt,
+      userMessageContent: resolvedPrompt.content,
       tools,
       signal: abortController.signal,
       llmLogSink: options.debug ? llmLogSink : undefined,

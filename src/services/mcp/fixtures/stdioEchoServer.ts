@@ -74,6 +74,21 @@ function handleLine(line: string): void {
     return;
   }
 
+  if (parsed.method === "resources/read") {
+    const params = isRecord(parsed.params) ? parsed.params : {};
+    const uri = typeof params["uri"] === "string" ? params["uri"] : "fixture://missing";
+    writeResult(parsed.id, {
+      contents: [
+        {
+          uri,
+          mimeType: "text/plain",
+          text: `resource:${uri}`,
+        },
+      ],
+    });
+    return;
+  }
+
   writeError(parsed.id, -32601, `Method not found: ${String(parsed.method)}`);
 }
 
