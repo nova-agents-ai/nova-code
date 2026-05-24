@@ -24,6 +24,20 @@ export interface TextBlock {
   readonly text: string;
 }
 
+export type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+export interface Base64ImageSource {
+  readonly type: "base64";
+  readonly media_type: ImageMediaType;
+  readonly data: string;
+}
+
+/** 用户输入中的图片附件。 */
+export interface ImageBlock {
+  readonly type: "image";
+  readonly source: Base64ImageSource;
+}
+
 /** 模型请求调用某个工具。由 assistant message 产生。 */
 export interface ToolUseBlock {
   readonly type: "tool_use";
@@ -44,7 +58,7 @@ export interface ToolResultBlock {
 }
 
 /** nova-code 当前支持的全部内容块类型。 */
-export type NovaContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export type NovaContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
 
 /** 角色枚举。assistant 由模型产生，user 由调用方或 tool_result 产生。 */
 export enum MessageRoleEnum {

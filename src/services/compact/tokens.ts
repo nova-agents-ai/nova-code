@@ -41,6 +41,7 @@ export function getTokenCountFromUsage(usage: ApiUsage): number {
  * 字符数统计规则：
  * - 字符串 content：直接取 length
  * - text block：取 text.length
+ * - image block：按 base64 长度粗估（比真实视觉 token 保守，但能触发 compact）
  * - tool_use block：JSON.stringify(input).length + name.length
  * - tool_result block：content.length
  */
@@ -83,6 +84,8 @@ function charsForContent(content: NovaMessage["content"]): number {
   for (const block of content) {
     if (block.type === "text") {
       chars += block.text.length;
+    } else if (block.type === "image") {
+      chars += block.source.data.length;
     } else if (block.type === "tool_use") {
       // JSON.stringify 不会抛（input 是 Record<string, unknown>，由 SDK 解析过）
       chars += JSON.stringify(block.input).length + block.name.length;

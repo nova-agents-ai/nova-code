@@ -23,6 +23,10 @@ import type { ConfigSource, ResolvedConfig } from "../../config/config.ts";
 import { AbortError } from "../../errors/index.ts";
 import { buildSystemPrompt } from "../../QueryEngine.ts";
 import {
+  type McpResourceReader,
+  resolvePromptAttachments,
+} from "../../services/attachments/index.ts";
+import {
   type AutoCompactTrackingState,
   createAutoCompactTrackingState,
 } from "../../services/compact/autoCompact.ts";
@@ -57,6 +61,8 @@ export interface RunChatReplParams {
   readonly tools: readonly Tool[];
   /** Optional dynamic tool source, used by MCP list_changed refreshes between turns. */
   readonly getTools?: () => readonly Tool[];
+  /** M14：给 @MCP__server__resource 附件读取 MCP resource。 */
+  readonly mcpRegistry?: McpResourceReader;
   readonly debugSink: DebugSink;
   /**
    * 可选：记录原始 LLM 请求/响应的独立 sink（chat-llm-*.log）。
@@ -119,6 +125,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     config,
     tools,
     getTools,
+    mcpRegistry,
     debugSink,
     llmLogSink,
     configSource,
@@ -329,10 +336,21 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
 
       try {
         const runtimeInstructions = buildRuntimeInstructions({ projectInstructions, skills });
+        const resolvedPrompt = await resolvePromptAttachments({
+          prompt: turnInput,
+          cwd: process.cwd(),
+          signal: abortController.signal,
+          ...(mcpRegistry !== undefined ? { mcpRegistry } : {}),
+          ...(projectInstructionsRuntime !== undefined ? { projectInstructionsRuntime } : {}),
+        });
+        for (const warning of resolvedPrompt.warnings) {
+          io.stderr(`[attachment] ${warning}\n`);
+        }
         const gen = session.sendTurn(turnInput, {
           config,
           tools: readCurrentTools(),
           signal: abortController.signal,
+          userMessageContent: resolvedPrompt.content,
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
           permissionMode: modeState.current,
           ...(permissionStore !== undefined ? { permissionStore } : {}),

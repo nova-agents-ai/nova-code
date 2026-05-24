@@ -30,6 +30,11 @@ export interface ActivateProjectRulesParams {
   readonly cwd: string;
 }
 
+export interface ActivateProjectRulesForPathParams {
+  readonly path: string;
+  readonly cwd: string;
+}
+
 export interface ProjectRuleActivation {
   readonly path: string;
   readonly triggerFilePath: string;
@@ -40,6 +45,9 @@ export interface ProjectInstructionsRuntime {
   readonly getInstructions: () => string | undefined;
   readonly activateForToolUse: (
     params: ActivateProjectRulesParams,
+  ) => Promise<readonly ProjectRuleActivation[]>;
+  readonly activateForPath: (
+    params: ActivateProjectRulesForPathParams,
   ) => Promise<readonly ProjectRuleActivation[]>;
 }
 
@@ -102,7 +110,13 @@ class DefaultProjectInstructionsRuntime implements ProjectInstructionsRuntime {
     const triggerPath = extractInstructionTriggerPath(params);
     if (triggerPath === undefined) return [];
 
-    const absoluteTriggerPath = resolveToolPath(triggerPath, params.cwd);
+    return await this.activateForPath({ path: triggerPath, cwd: params.cwd });
+  }
+
+  async activateForPath(
+    params: ActivateProjectRulesForPathParams,
+  ): Promise<readonly ProjectRuleActivation[]> {
+    const absoluteTriggerPath = resolveToolPath(params.path, params.cwd);
     const activated: ProjectRuleActivation[] = [];
     for (const rule of this.conditionalRules) {
       if (this.activeRulePaths.has(rule.path)) continue;

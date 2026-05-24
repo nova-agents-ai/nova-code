@@ -72,6 +72,7 @@ import { findTool } from "./tools.ts";
 import {
   type AgentEvent,
   AgentStopReasonEnum,
+  type ImageBlock,
   MessageRoleEnum,
   type NovaContentBlock,
   type NovaMessage,
@@ -104,6 +105,14 @@ export interface AgentLoopParams {
   readonly config: ResolvedConfig;
   /** 用户初始 prompt（会被包成最新一条 user message，追加到 initialMessages 之后）。 */
   readonly userPrompt: string;
+  /**
+   * M14：解析 prompt 附件后的结构化 user content。
+   *
+   * 不传时仍用 userPrompt 字符串，保持 M1-M13 的 API 兼容；ask/chat 会在同一个
+   * attachment resolver 中把 `@file` / `@dir` / `@glob` / MCP resource 转成
+   * text/image blocks 后通过本字段注入。
+   */
+  readonly userMessageContent?: NovaMessage["content"];
   /**
    * 可选的历史对话 messages。
    *
@@ -251,7 +260,7 @@ export async function* runAgentLoop(
     ...(params.initialMessages ?? []),
     {
       role: MessageRoleEnum.USER,
-      content: userPrompt,
+      content: params.userMessageContent ?? userPrompt,
     },
   ];
 
@@ -1132,6 +1141,8 @@ function formatContentBlockForSubAgent(block: NovaContentBlock): string {
   switch (block.type) {
     case "text":
       return block.text;
+    case "image":
+      return `[image ${block.source.media_type}, ${block.source.data.length} base64 chars]`;
     case "tool_use":
       return `[tool_use ${block.name}] ${JSON.stringify(block.input)}`;
     case "tool_result":
@@ -1224,6 +1235,8 @@ function toSdkContentBlock(block: NovaContentBlock): ContentBlockParam {
   switch (block.type) {
     case "text":
       return { type: "text", text: block.text };
+    case "image":
+      return toSdkImageBlock(block);
     case "tool_use":
       return {
         type: "tool_use",
@@ -1241,6 +1254,17 @@ function toSdkContentBlock(block: NovaContentBlock): ContentBlockParam {
       return param;
     }
   }
+}
+
+function toSdkImageBlock(block: ImageBlock): ContentBlockParam {
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: block.source.media_type,
+      data: block.source.data,
+    },
+  };
 }
 
 function fromSdkMessage(message: SdkMessage): NovaMessage {

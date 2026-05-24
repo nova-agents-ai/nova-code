@@ -269,6 +269,16 @@ function toSdkMessageParam(message: NovaMessage): SdkMessageParam {
         ? message.content
         : message.content.map((block) => {
             if (block.type === "text") return { type: "text" as const, text: block.text };
+            if (block.type === "image") {
+              // The compact LLM call only needs to summarize prior turns; resending
+              // the full base64 doubles cost on every compact and contributes
+              // nothing the summary couldn't capture as text. Replace with a
+              // small placeholder so the model still knows an image was present.
+              return {
+                type: "text" as const,
+                text: `[image attachment elided for compact: ${block.source.media_type}, ${block.source.data.length} base64 chars]`,
+              };
+            }
             if (block.type === "tool_use") {
               return {
                 type: "tool_use" as const,

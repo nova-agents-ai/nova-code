@@ -38,5 +38,8 @@ describe("McpStdioClient", () => {
     const called = await client.callTool("echo", { message: "hello" });
     expect(called.content[0]?.text).toBe("echo:hello");
     expect(called.structuredContent?.["echoed"]).toBe("hello");
+
+    const resource = await client.readResource("fixture://doc");
+    expect(resource.contents[0]?.text).toBe("resource:fixture://doc");
   });
 });

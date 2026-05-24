@@ -5,6 +5,8 @@ import type {
   McpCallToolResult,
   McpInitializeResult,
   McpListToolsResult,
+  McpReadResourceResult,
+  McpResourceContent,
   McpToolAnnotations,
   McpToolDefinition,
 } from "./types.ts";
@@ -100,6 +102,23 @@ export function parseCallToolResult(
   };
 }
 
+export function parseReadResourceResult(
+  value: unknown,
+  serverName: string,
+  uri: string,
+): McpReadResourceResult {
+  if (!isRecord(value) || !Array.isArray(value["contents"])) {
+    throw new McpProtocolError(
+      `MCP server '${serverName}' returned invalid resources/read result for '${uri}'.`,
+    );
+  }
+  return {
+    contents: value["contents"].map((item, index) =>
+      parseResourceContent(item, serverName, uri, index),
+    ),
+  };
+}
+
 export function isJsonRpcResponse(
   value: Readonly<Record<string, unknown>>,
 ): value is JsonRpcResponse & Readonly<Record<string, unknown>> {
@@ -176,6 +195,32 @@ function parseContentBlock(
   return {
     ...value,
     type,
+  };
+}
+
+function parseResourceContent(
+  value: unknown,
+  serverName: string,
+  uri: string,
+  index: number,
+): McpResourceContent {
+  if (!isRecord(value)) {
+    throw new McpProtocolError(
+      `MCP server '${serverName}' returned non-object resource content at '${uri}' index ${index}.`,
+    );
+  }
+  const contentUri = value["uri"];
+  if (typeof contentUri !== "string") {
+    throw new McpProtocolError(
+      `MCP server '${serverName}' returned resource content without uri at '${uri}' index ${index}.`,
+    );
+  }
+  return {
+    ...value,
+    uri: contentUri,
+    ...(typeof value["mimeType"] === "string" ? { mimeType: value["mimeType"] } : {}),
+    ...(typeof value["text"] === "string" ? { text: value["text"] } : {}),
+    ...(typeof value["blob"] === "string" ? { blob: value["blob"] } : {}),
   };
 }
 

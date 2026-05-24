@@ -38,6 +38,9 @@ describe("mcpToolRegistry", () => {
     );
     expect(result).toContain("echo:through registry");
     expect(result).toContain("Structured content");
+
+    const resource = await registry.readResource("fixture", "fixture://doc");
+    expect(resource.contents[0]?.text).toBe("resource:fixture://doc");
   });
 
   test("refreshes bridged tools after tools/list_changed notification", async () => {

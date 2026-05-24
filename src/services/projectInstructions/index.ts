@@ -20,6 +20,7 @@ export {
 } from "./claudeMd.ts";
 export { findGitRoot, getDirectoryChain } from "./pathDiscovery.ts";
 export type {
+  ActivateProjectRulesForPathParams,
   ActivateProjectRulesParams,
   CreateProjectInstructionsRuntimeParams,
   ProjectInstructionsRuntime,
