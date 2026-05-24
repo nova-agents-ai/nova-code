@@ -39,9 +39,9 @@ export const AgentTool: Tool = {
       },
       subagent_type: {
         type: "string",
-        enum: [SubAgentTypeEnum.GENERAL_PURPOSE, SubAgentTypeEnum.EXPLORE],
+        enum: [SubAgentTypeEnum.GENERAL_PURPOSE, SubAgentTypeEnum.EXPLORE, SubAgentTypeEnum.PLAN],
         description:
-          "Optional sub-agent type. Use explore for read-only codebase research; omit for general-purpose work.",
+          "Optional sub-agent type. Use explore for read-only research, plan for read-only implementation planning, or omit for general-purpose work.",
       },
     },
     required: ["description", "prompt"],
@@ -66,11 +66,15 @@ function parseAgentToolInput(input: Readonly<Record<string, unknown>>): ParsedAg
   const prompt = parseBoundedString(input["prompt"], "prompt", { maxChars: MAX_PROMPT_CHARS });
   const rawType = input["subagent_type"];
   if (rawType === undefined) return { description, prompt };
-  if (rawType === SubAgentTypeEnum.GENERAL_PURPOSE || rawType === SubAgentTypeEnum.EXPLORE) {
+  if (
+    rawType === SubAgentTypeEnum.GENERAL_PURPOSE ||
+    rawType === SubAgentTypeEnum.EXPLORE ||
+    rawType === SubAgentTypeEnum.PLAN
+  ) {
     return { description, prompt, subagentType: rawType };
   }
   throw new Error(
-    `Agent input field 'subagent_type' must be '${SubAgentTypeEnum.GENERAL_PURPOSE}' or '${SubAgentTypeEnum.EXPLORE}'.`,
+    `Agent input field 'subagent_type' must be '${SubAgentTypeEnum.GENERAL_PURPOSE}', '${SubAgentTypeEnum.EXPLORE}', or '${SubAgentTypeEnum.PLAN}'.`,
   );
 }
 

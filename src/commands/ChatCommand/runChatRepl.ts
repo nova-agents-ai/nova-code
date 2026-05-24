@@ -33,6 +33,10 @@ import {
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import {
+  createInteractivePlanApprovalProvider,
+  createPlanModeRuntime,
+} from "../../services/plan/index.ts";
+import {
   formatPluginSlashListing,
   type PluginSlashCommand,
   resolvePluginSlashInvocation,
@@ -239,6 +243,18 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     },
   };
 
+  // ────────────── M15 Plan Mode 状态机 ──────────────
+  const planModeRuntime = createPlanModeRuntime({
+    initialPermissionMode: modeState.current,
+    approvalProvider: createInteractivePlanApprovalProvider({
+      write: (text) => io.stderr(text),
+      readLine,
+    }),
+    onPermissionModeChange: (mode) => {
+      permissionModeRef.set(mode);
+    },
+  });
+
   // ────────────── Welcome ──────────────
   io.stderr(
     [
@@ -281,6 +297,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         continue;
       }
       const pluginSlashInvocation = resolvePluginSlashInvocation(input, pluginSlashCommands);
+      let slashSubmittedInput: string | undefined;
 
       // M4: 为 /compact 这类需要发 LLM 调用的命令准备 chatRuntime；
       // 复用 sendTurn 风格的 abortController + streaming 阶段，让 Ctrl+C 能中断 compact。
@@ -299,6 +316,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           ...(configSource ? { configSource } : {}),
           ...(permissionStore !== undefined ? { permissionStore } : {}),
           permissionModeRef,
+          planModeRuntime,
           chatRuntime: {
             config,
             signal: slashAbort.signal,
@@ -320,14 +338,18 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
             printCostSummary(costTracker, io);
             return dispatch.result.exitCode ?? 0;
           }
-          continue;
+          if (dispatch.result.action === "continue") {
+            continue;
+          }
+          slashSubmittedInput = dispatch.result.input;
         }
       }
 
       const turnInput =
-        skillSlashInvocation?.kind === "invoke"
+        slashSubmittedInput ??
+        (skillSlashInvocation?.kind === "invoke"
           ? skillSlashInvocation.prompt
-          : (pluginSlashInvocation?.prompt ?? input);
+          : (pluginSlashInvocation?.prompt ?? input));
 
       // 走真实 agent loop
       const abortController = new AbortController();
@@ -364,6 +386,7 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
             : {}),
           ...(projectInstructionsRuntime !== undefined ? { projectInstructionsRuntime } : {}),
           hooks: config.hooks,
+          planModeRuntime,
         });
         for await (const event of gen) {
           debugSink.write(event);

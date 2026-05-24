@@ -31,6 +31,7 @@ import { compactConversation } from "../../services/compact/compact.ts";
 import type { HooksConfig } from "../../services/hooks/types.ts";
 import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
+import type { PlanModeRuntime } from "../../services/plan/index.ts";
 import type { ProjectInstructionsRuntime } from "../../services/projectInstructions/index.ts";
 import type { Tool } from "../../Tool.ts";
 import {
@@ -83,6 +84,8 @@ export interface ChatTurnContext {
   readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   // ── M10 Hooks 注入（透传给 runAgentLoop）───────────────────────────────
   readonly hooks?: HooksConfig;
+  // ── M15 Plan Mode 注入 ────────────────────────────────────────────────
+  readonly planModeRuntime?: PlanModeRuntime;
 }
 
 /**
@@ -172,6 +175,7 @@ export class ChatSession {
         ? { projectInstructionsRuntime: ctx.projectInstructionsRuntime }
         : {}),
       ...(ctx.hooks !== undefined ? { hooks: ctx.hooks } : {}),
+      ...(ctx.planModeRuntime !== undefined ? { planModeRuntime: ctx.planModeRuntime } : {}),
       sessionId: this._meta.sessionId,
     });
 

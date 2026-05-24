@@ -383,7 +383,7 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - 测试：新增附件 parser/resolver 单测、MCP resource bridge 单测、QueryEngine 结构化 content 单测、`m14-e2e-attachments` 子进程验证
 - 详见 `docs/design/M14-attachments.md`、使用手册 `docs/manual/M14-usage-guide.md`、实现架构 `docs/architecture/M14-architecture.md`
 
-### M15 — Plan Mode 作为一等运行模式
+### M15 — Plan Mode 作为一等运行模式 ✅（已完成）
 
 把当前仅作为权限模式占位的 `plan` 提升为完整交互状态：先计划、再审批、再执行。
 
@@ -400,6 +400,15 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 **边界**：本 milestone 做 claude-code parity 的 Plan Mode；Phase 3 的 Plan-Execute-Verify 多阶段自治 loop 仍是更高阶能力，不在此处展开。
 
 **DoD**：用户开启 `/plan` 后，模型只能产出计划并请求批准；批准前任何 Bash/FileWrite/FileEdit 都被拦截。
+
+**交付摘要（2026-05-24）**：
+
+- 新增 `src/services/plan/` 会话级 Plan Mode 状态机，覆盖 `planning → awaitingApproval → executing / rejected`，并在 system prompt 中注入 planning 约束或 approved plan。
+- 新增 `EnterPlanMode` / `ExitPlanMode` 内置工具；`ExitPlanMode({ plan })` 在 chat 中触发 y/n 审批，获批后恢复进入前权限模式，拒绝后保持 Plan Mode。
+- 新增 `/plan [prompt]` 与 `/plan status`；`/plan <prompt>` 会进入 Plan Mode 后继续把 prompt 作为当前 turn 提交。
+- 权限引擎在 `mode:"plan"` 下于 bypass / allow 规则之前拦截 `Bash` / `FileWrite` / `FileEdit`；即使 `--dangerously-skip-permissions` 也必须等 plan 获批。
+- M11 `Agent` 新增 `subagent_type:"plan"`，与 `explore` 一样只暴露只读工具，供模型并行产出计划但不能改文件。
+- 新增 M15 设计文档 / 使用手册 / 架构快照：[`docs/design/M15-plan-mode.md`](./design/M15-plan-mode.md)、[`docs/manual/M15-usage-guide.md`](./manual/M15-usage-guide.md)、[`docs/architecture/M15-architecture.md`](./architecture/M15-architecture.md)。
 
 ### M16 — 多 Provider 抽象
 
@@ -527,7 +536,7 @@ Phase 3 不预设具体顺序。
              M14 Attachments / @-mention ✅
                          │
                          ▼
-                    M15 Plan Mode
+                 M15 Plan Mode ✅
                          │
               ┌──────────┼──────────┐
               ▼          ▼          ▼
@@ -642,6 +651,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.20**（2026-05-24）：M15 Plan Mode 一等运行模式落地。新增 `src/services/plan` 状态机、`EnterPlanMode` / `ExitPlanMode` 工具与 `/plan [prompt]` slash command；QueryEngine 每轮注入 Plan Mode / approved plan system instructions，并在权限判定前动态读取有效模式；`permissionEngine` 在 plan 模式下于 bypass / allow 规则之前拦截 `Bash` / `FileWrite` / `FileEdit`；chat 中 `ExitPlanMode({ plan })` 展示计划并读取 y/n 审批，获批后恢复进入前权限模式；`Agent` 新增只读 `subagent_type:"plan"`；新增 M15 设计文档 / 使用手册 / 架构快照。
 - **v2.19**（2026-05-19）：M14 Prompt 附件与 @-mention 上下文注入落地。新增 `src/services/attachments`，ask/chat 共享解析 `@file` / `@dir` / `@glob` / `@MCP__server__resource`；文件、目录摘要、glob、图片与 MCP resource 作为结构化 user content 注入模型；`ProjectInstructionsRuntime.activateForPath()` 让附件命中文件路径时首轮激活 M12 path-scoped rules；MCP stdio / HTTP client 与 registry 扩展 `resources/read`；`QueryEngine` 支持 `userMessageContent` 与 `ImageBlock`；新增 M14 设计文档 / 使用手册 / 架构快照。
 - **v2.18**（2026-05-18）：M13 插件系统落地。新增本地插件发现与 `plugin.json` manifest 校验，支持 `.nova-code/plugins/` 与 `~/.nova-code/plugins/`；新增 `nova-code plugin list|enable|disable|reload|validate` 与 `PersistedConfig.plugins` 信任/启用状态；插件可贡献 skills、`/plugin:command` custom slash commands、hooks、MCP servers 与 path-scoped rules；ask/chat 启动时把插件贡献项合并进既有 M8/M9/M10/M12 子系统；新增 M13 设计文档 / 使用手册 / 架构快照。
 - **v2.17**（2026-05-17）：M12 `.claude/rules` 逻辑落地。新增 `ProjectInstructionsRuntime`，支持递归扫描 `.claude/rules/**/*.md`、无 `paths` 规则 eager load、带 `paths` 规则在 FileRead/FileEdit/FileWrite 命中文件后延迟激活；规则内容复用 @include 与 HTML comment strip 并剥离 frontmatter；Hooks 扩展 `InstructionsLoaded` 审计事件；新增 M12 设计文档 / 使用手册 / 架构快照。

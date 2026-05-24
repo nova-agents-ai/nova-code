@@ -14,6 +14,7 @@ import type { ConfigSource, ResolvedConfig } from "../../../config/config.ts";
 import type { LlmLogSink } from "../../../QueryEngine.ts";
 import type { CostTracker } from "../../../services/cost/index.ts";
 import type { PermissionStore } from "../../../services/permissions/permissionStore.ts";
+import type { PlanModeRuntime } from "../../../services/plan/index.ts";
 import type { Tool } from "../../../Tool.ts";
 import type { PermissionMode } from "../../../types/permissions.ts";
 import type { ChatSession } from "../ChatSession.ts";
@@ -39,7 +40,8 @@ export interface SlashIO {
  */
 export type SlashResult =
   | { readonly action: "continue" }
-  | { readonly action: "exit"; readonly exitCode?: number };
+  | { readonly action: "exit"; readonly exitCode?: number }
+  | { readonly action: "submit"; readonly input: string };
 
 /**
  * 权限模式可读可写 ref，给 /permissions mode 命令在运行时切换模式。
@@ -64,6 +66,8 @@ export interface SlashContext {
   readonly permissionStore?: PermissionStore;
   /** 权限模式 ref；/permissions mode 依赖它。 */
   readonly permissionModeRef?: PermissionModeRef;
+  /** M15：Plan Mode 状态机；/plan 依赖它。 */
+  readonly planModeRuntime?: PlanModeRuntime;
   /**
    * M4/M12：发 LLM 调用的斜杠命令需要的运行时上下文（仅 /compact 等使用）。
    *
