@@ -59,7 +59,15 @@ tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，e
 - **不可变性**：默认 `const`、`readonly`、`spread` 创建新对象，不要原地修改。
 - **注释解释 WHY**，不解释 WHAT；禁止保留被注释掉的代码；禁止 `TODO` 注释（如必须保留，需关联 issue 编号）。
 
-## 5. CLI 扩展规范
+## 5. 安全与隐私（必须遵守）
+
+- **禁止写入真实密钥或凭证**：不要把 API key、token、password、private key、cookie、SSH key、云厂商 AK/SK、OAuth secret、`.env` 实际内容、`~/.nova-code/config.json` 中的真实 `apiKey` 等写进代码、测试、文档、日志样例或提交历史。
+- **禁止写入个人信息**：不要提交个人姓名、个人邮箱、个人 GitHub 账号、个人主目录路径（如 `/Users/<name>` / `/home/<name>`）、私人服务器 IP/域名等，除非维护者明确要求且这是功能必需。
+- **示例统一用占位符**：文档和测试里使用 `nova-agents-ai`、`example.com`、`/path/to/project`、`<TOKEN>`、`${MCP_TOKEN}`、`sk-mock`、`sk-ant-xxxxxxxxxxxx` 这类明显假的值；不要使用看起来像真实长 token 的随机串。
+- **输出必须脱敏**：涉及配置展示、debug log、错误信息、hook 输出、MCP env/header、proxy URL 等场景时，默认只展示必要上下文，密钥/密码只保留尾部少量字符或全部替换为 `****`。
+- **提交前主动扫描**：涉及配置、文档示例、认证、网络、MCP、发布脚本或历史改写时，至少用 `rg` 检查常见敏感模式；本机有 `gitleaks` 时优先跑 `gitleaks dir . --redact`，需要检查历史时跑 `gitleaks detect --source . --log-opts='--all' --redact`。
+
+## 6. CLI 扩展规范
 
 新增子命令的标准流程（**只改 `src/commands.ts` 一个文件**）：
 
@@ -69,7 +77,7 @@ tsconfig.json       TS 严格模式 + bun 类型；include 限定为 bin/src，e
 
 `cli.ts` 的职责仅限于：参数解析、`--help` / `--version`、命令查找、统一异常兜底。**不要**在 `cli.ts` 里写业务逻辑。
 
-## 6. 提交前以及每一次代码改动后校验（必跑）
+## 7. 提交前以及每一次代码改动后校验（必跑）
 
 **硬性约束：每次代码改动后，以下三条命令必须全部通过，缺一不可。**
 
@@ -96,7 +104,7 @@ bun run check              # biome lint + format 检查
 
 `prepublishOnly` 钩子会强制跑 `typecheck && check && test`，不通过则发布失败。
 
-## 7. 测试
+## 8. 测试
 
 用 `bun:test`，文件名 `<name>.test.ts`，与被测文件同目录。
 
@@ -112,13 +120,13 @@ describe("runCli", () => {
 });
 ```
 
-## 8. 这个仓库 **不是** Web/前端项目
+## 9. 这个仓库 **不是** Web/前端项目
 
 - **禁止**引入 React / Vue / Tailwind / Vite。
 - **禁止**新增 `.html` / `.tsx` / `.css` 文件。
 - 如确需 Web UI，请先与维护者讨论，再独立放到 `web/` 子目录，避免污染 CLI 主项目。
 
-## 9. Milestone 交付文档约定（硬性约束）
+## 10. Milestone 交付文档约定（硬性约束）
 
 **每一个 roadmap 阶段（M0 / M1 / M1.5 / M2 / M3 …）完成后，除代码 DoD 外，必须同时交付以下三类文档：**
 

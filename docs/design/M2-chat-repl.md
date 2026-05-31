@@ -57,7 +57,7 @@ src/
 
 ## 四、QueryEngine 扩签名
 
-当前 [runAgentLoop](src/QueryEngine.ts) 固定把 `userPrompt` 作为 `messages[0]`。多轮对话要求"最新一条 user 消息前还有历史"。扩法保持向后兼容：
+当前 [runAgentLoop](../../src/QueryEngine.ts) 固定把 `userPrompt` 作为 `messages[0]`。多轮对话要求"最新一条 user 消息前还有历史"。扩法保持向后兼容：
 
 ```ts
 export interface AgentLoopParams {
@@ -112,7 +112,7 @@ export class ChatSession {
 
 ## 六、debug sink 按 session 切分
 
-[buildDebugLogFileName](src/commands/AskCommand/debugSink.ts) 的 `ask-` 前缀硬编码要参数化。扩法：
+[buildDebugLogFileName](../../src/commands/AskCommand/debugSink.ts) 的 `ask-` 前缀硬编码要参数化。扩法：
 
 ```ts
 export interface CreateFileDebugSinkOptions {

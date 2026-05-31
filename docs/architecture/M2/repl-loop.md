@@ -1,7 +1,7 @@
 # REPL 主循环（runChatRepl）
 
-对应源文件：[runChatRepl.ts](src/commands/ChatCommand/runChatRepl.ts) +
-[renderAgentEvent.ts](src/commands/ChatCommand/renderAgentEvent.ts)。
+对应源文件：[runChatRepl.ts](../../../src/commands/ChatCommand/runChatRepl.ts) +
+[renderAgentEvent.ts](../../../src/commands/ChatCommand/renderAgentEvent.ts)。
 
 本文件解释 M2 的交互引擎如何把 `readline` 的按行输入、SIGINT
 信号、斜杠命令、`ChatSession.sendTurn` 的事件流拼成一个可用的聊天 REPL。
@@ -13,13 +13,13 @@
 runChatRepl 专注于「I/O + 状态机 + 分发」，具体而言只做 4 件事：
 
 1. 用 `node:readline/promises` 按行读取用户输入
-2. 把每一行先交给 [dispatchSlash](src/commands/ChatCommand/slash/dispatcher.ts) —— 识别斜杠命令；非斜杠再交给 `session.sendTurn`
+2. 把每一行先交给 [dispatchSlash](../../../src/commands/ChatCommand/slash/dispatcher.ts) —— 识别斜杠命令；非斜杠再交给 `session.sendTurn`
 3. 消费 AgentEvent 流 → 同时喂给 debugSink 和 renderAgentEvent
 4. 管理 SIGINT 三态状态机（idle / streaming / pending-exit）
 
 它**不做**：
 
-- 不自己构造 ChatSession（由 [ChatCommand](src/commands/ChatCommand/ChatCommand.ts) 传入）
+- 不自己构造 ChatSession（由 [ChatCommand](../../../src/commands/ChatCommand/ChatCommand.ts) 传入）
 - 不维护对话历史（历史在 ChatSession 内部，REPL 只是消费事件）
 - 不做具体事件渲染（全部委托 renderAgentEvent）
 - 不决定"什么算斜杠命令" —— 只要前缀是 `/` 就交给 dispatcher
@@ -229,9 +229,9 @@ runChatRepl 内部纯控制流，没有可被独立验证的领域逻辑：
 - readline 与 TTY/SIGINT 的互动最小化复现需要子进程 + 真实 pty，这属于 e2e 层
 
 M2 的测试策略是「三块高内聚组件各自单测充分」+「e2e 覆盖集成」：
-- [ChatSession.test.ts](src/commands/ChatCommand/ChatSession.test.ts) 覆盖事件重建 + 原子提交
-- [dispatcher.test.ts](src/commands/ChatCommand/slash/dispatcher.test.ts) 覆盖斜杠命令解析
-- [renderAgentEvent.test.ts](src/commands/ChatCommand/renderAgentEvent.test.ts) 覆盖事件到 I/O 的映射
+- [ChatSession.test.ts](../../../src/commands/ChatCommand/ChatSession.test.ts) 覆盖事件重建 + 原子提交
+- [dispatcher.test.ts](../../../src/commands/ChatCommand/slash/dispatcher.test.ts) 覆盖斜杠命令解析
+- [renderAgentEvent.test.ts](../../../src/commands/ChatCommand/renderAgentEvent.test.ts) 覆盖事件到 I/O 的映射
 - runChatRepl 由 bun e2e 覆盖（Task 10，跨子进程）
 
 ---

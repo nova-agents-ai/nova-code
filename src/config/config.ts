@@ -146,7 +146,7 @@ export function getLogsDirPath(source: ConfigSource = {}): string {
 /**
  * 计算会话持久化目录的绝对路径（~/.nova-code/sessions）。
  *
- * 与 [getLogsDirPath](src/config/config.ts) 保持对称的套路：只返回路径、不 mkdir，
+ * 与 `getLogsDirPath` 保持对称的套路：只返回路径、不 mkdir，
  * 让调用方（sessionStore）自行在写入前保证目录存在。
  *
  * M2 chat REPL 的 /save /load 用这个目录存放 `<sessionId>.jsonl`。

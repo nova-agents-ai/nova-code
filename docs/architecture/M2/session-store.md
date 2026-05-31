@@ -1,7 +1,7 @@
 # 会话持久化（sessionId + sessionStore）
 
-对应源文件：[sessionId.ts](src/commands/ChatCommand/sessionId.ts) +
-[sessionStore.ts](src/commands/ChatCommand/sessionStore.ts)。
+对应源文件：[sessionId.ts](../../../src/commands/ChatCommand/sessionId.ts) +
+[sessionStore.ts](../../../src/commands/ChatCommand/sessionStore.ts)。
 
 这两个模块承担 M2 的「会话落盘」能力：如何为每一场对话生成稳定 ID，如何把
 `ChatSession` 的 `{ meta, messages[] }` 写到 JSONL 又能可靠读回来。
@@ -253,9 +253,9 @@ interface SessionSnapshot {
 
 两个入口走的 loadSession 完全相同，区别只在时机：
 
-- **--resume**：[ChatCommand.ts#resumeSession](src/commands/ChatCommand/ChatCommand.ts) 在 REPL 启动前调 loadSession，
+- **--resume**：[ChatCommand.ts#resumeSession](../../../src/commands/ChatCommand/ChatCommand.ts) 在 REPL 启动前调 loadSession，
   把结果直接 `new ChatSession(meta, messages)`
-- **/load**：[slash/load.ts](src/commands/ChatCommand/slash/load.ts) 在 REPL 中调 loadSession，再通过
+- **/load**：[slash/load.ts](../../../src/commands/ChatCommand/slash/load.ts) 在 REPL 中调 loadSession，再通过
   `session.restore(meta, messages)` 原地替换
 
 `/load` 比 --resume 多一层保险：若当前会话 `messages.length > 0`，会先用
@@ -265,11 +265,11 @@ interface SessionSnapshot {
 
 ## 9. 测试覆盖
 
-- [sessionId.test.ts](src/commands/ChatCommand/sessionId.test.ts)：
+- [sessionId.test.ts](../../../src/commands/ChatCommand/sessionId.test.ts)：
   - 注入固定 now/random 得到确定性 ID
   - 格式正则断言（`YYYY-MM-DDTHH-mm-ss-<8hex>`）
   - 边界：月/日/时/分/秒的补零
-- [sessionStore.test.ts](src/commands/ChatCommand/sessionStore.test.ts)：
+- [sessionStore.test.ts](../../../src/commands/ChatCommand/sessionStore.test.ts)：
   - 往返：save 后 load 得到相同 snapshot
   - alias 写出两份文件
   - 缺 meta 行 / 重复 meta / 未知 kind / 非法 JSON → 抛带行号错

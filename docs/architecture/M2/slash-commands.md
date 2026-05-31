@@ -1,6 +1,6 @@
 # 斜杠命令体系
 
-对应源目录：[src/commands/ChatCommand/slash/](src/commands/ChatCommand/slash/)
+对应源目录：[src/commands/ChatCommand/slash/](../../../src/commands/ChatCommand/slash/)
 
 斜杠命令是 chat REPL 的「带内控制平面」：在同一输入框里既能和模型对话，又能
 通过 `/xxx` 触发本地动作（清空历史、保存、退出 等）。本文档解释 M2 如何组织
@@ -10,7 +10,7 @@
 
 ## 1. 为什么独立于顶层 CommandDefinition
 
-顶层 `CommandDefinition`（见 [src/commands/types.ts](src/commands/types.ts)）是
+顶层 `CommandDefinition`（见 [src/commands/types.ts](../../../src/commands/types.ts)）是
 **子进程启动时跑一次**的命令（`nova-code ask ...`、`nova-code chat ...`）。
 SlashCommand 在 **REPL 中每轮可能触发多次**、而且必须拿到 `ChatSession` 句柄。
 
@@ -211,7 +211,7 @@ export function findSlashCommand(name: string): SlashCommand | undefined {
 
 ## 5. 内置命令逐个说明
 
-### 5.1 `/clear`（[clear.ts](src/commands/ChatCommand/slash/clear.ts)）
+### 5.1 `/clear`（[clear.ts](../../../src/commands/ChatCommand/slash/clear.ts)）
 
 ```ts
 ctx.session.clear();
@@ -223,7 +223,7 @@ return { action: "continue" };
 - 用户心智："重开一段对话但仍沿用这个会话文件"
 - 之后 `/save` 仍写到同一个 sessionId.jsonl，旧内容被覆盖
 
-### 5.2 `/exit`（[exit.ts](src/commands/ChatCommand/slash/exit.ts)）
+### 5.2 `/exit`（[exit.ts](../../../src/commands/ChatCommand/slash/exit.ts)）
 
 ```ts
 return { action: "exit", exitCode: 0 };
@@ -233,7 +233,7 @@ return { action: "exit", exitCode: 0 };
   Ctrl+C 双按是中断，退出码 130（SIGINT 语义）
 - 不做额外 cleanup —— debugSink/llmLogSink 的 close 由 ChatCommand 的 `finally` 兜底
 
-### 5.3 `/save [alias]`（[save.ts](src/commands/ChatCommand/slash/save.ts)）
+### 5.3 `/save [alias]`（[save.ts](../../../src/commands/ChatCommand/slash/save.ts)）
 
 ```ts
 const snapshot = { meta: session.meta, messages: session.snapshot() };
@@ -246,7 +246,7 @@ if (alias) await saveSession(alias, snapshot, configSource);
   `/load 2026-05-04T14-23-07-9a8b4c2d`
 - 错误全部在 command 内 catch → `io.print` → 返回 continue（符合"不抛"约定）
 
-### 5.4 `/load <idOrAlias>`（[load.ts](src/commands/ChatCommand/slash/load.ts)）
+### 5.4 `/load <idOrAlias>`（[load.ts](../../../src/commands/ChatCommand/slash/load.ts)）
 
 流程：
 
@@ -263,7 +263,7 @@ if (alias) await saveSession(alias, snapshot, configSource);
 - **restore 替换 meta**：sessionId 也跟着变（变成被加载的那个）。之后 /save
   就写到新 sessionId 的文件，避免把别人的会话 id 覆盖掉
 
-### 5.5 `/help`（[help.ts](src/commands/ChatCommand/slash/help.ts)）
+### 5.5 `/help`（[help.ts](../../../src/commands/ChatCommand/slash/help.ts)）
 
 ```
 可用斜杠命令：
@@ -281,7 +281,7 @@ if (alias) await saveSession(alias, snapshot, configSource);
 
 ## 6. 测试策略
 
-### 6.1 dispatcher 单测（[dispatcher.test.ts](src/commands/ChatCommand/slash/dispatcher.test.ts)）
+### 6.1 dispatcher 单测（[dispatcher.test.ts](../../../src/commands/ChatCommand/slash/dispatcher.test.ts)）
 
 覆盖用例：
 - 非斜杠 → `handled: false`
@@ -303,7 +303,7 @@ if (alias) await saveSession(alias, snapshot, configSource);
 若要新增一条斜杠命令：
 
 1. 在 `slash/` 下新建文件（比如 `cost.ts`），导出 `export const costCommand: SlashCommand`
-2. 在 [registry.ts](src/commands/ChatCommand/slash/registry.ts) 的
+2. 在 [registry.ts](../../../src/commands/ChatCommand/slash/registry.ts) 的
    `nonHelpCommands` 数组里加一项；顺序决定 `/help` 输出次序
 3. 写一份 `cost.test.ts` 做单测
 
