@@ -1,13 +1,13 @@
 # nova-code
 
-> 一个全新的 Code Agent CLI，基于 [Bun](https://bun.sh) + TypeScript 构建。
+> 一个用于学习 Claude Code 源码实现的渐进式 Code Agent CLI，基于 [Bun](https://bun.sh) + TypeScript 构建。
 
 [![CI](https://github.com/nova-agents-ai/nova-code/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nova-agents-ai/nova-code/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/nova-agents-ai/nova-code/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/nova-agents-ai/nova-code/actions/workflows/codeql.yml)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](./LICENSE)
 
-`nova-code` 旨在做一个开放、可扩展的 Code Agent 框架。当前仓库提供了最小可用的命令分发骨架（`hello` / `ask` / `chat`），后续会逐步接入更丰富的模型调用与代码工具能力。
+`nova-code` 以学习 Claude Code 的源码实现为目标，通过一个可运行、可测试的 Bun + TypeScript 项目，渐进式实现 Claude Code 的核心功能与工程结构。当前仓库提供了最小可用的命令分发骨架（`hello` / `ask` / `chat`），后续会按阶段接入会话交互、工具调用、权限控制、代码编辑工作流等能力。
 
 本仓库**同时是 CLI 也是库**：
 - 终端用户可以直接 `nova-code <command>` 使用；
