@@ -80,7 +80,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.92.0",
+    "@anthropic-ai/sdk": "^0.100.1",
     "marked": "^18.0.3"
   }
 }
