@@ -196,6 +196,7 @@ const baseConfig: ResolvedConfig = {
   webProxyDomains: [],
   mcpServers: {},
   hooks: {},
+  autoMemoryEnabled: false,
 };
 
 function makeEchoTool(): Tool {
@@ -1360,5 +1361,198 @@ describe("runAgentLoop - M3 权限注入", () => {
     );
     expect(toolResults.map((event) => event.isError)).toEqual([false, false]);
     expect(toolResults[1]?.content).toBe("write executed");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// M16: MemoryRuntime 注入
+// ────────────────────────────────────────────────────────────────────────────
+
+interface FakeMemoryRuntimeHandle {
+  readonly runtime: import("./services/memory/index.ts").MemoryRuntime;
+  readonly state: {
+    refreshCalls: number;
+    extractorCalls: number;
+    instructions: string | undefined;
+  };
+}
+
+function makeFakeMemoryRuntime(opts?: {
+  readonly memoryDir?: string;
+  readonly instructions?: string;
+}): FakeMemoryRuntimeHandle {
+  const state = {
+    refreshCalls: 0,
+    extractorCalls: 0,
+    instructions: opts?.instructions,
+  };
+  const runtime: import("./services/memory/index.ts").MemoryRuntime = {
+    memoryDir: opts?.memoryDir ?? "/fake/mem/projects/foo/",
+    entrypointPath: `${opts?.memoryDir ?? "/fake/mem/projects/foo/"}MEMORY.md`,
+    getInstructions: () => state.instructions,
+    refreshInstructions: async () => {
+      state.refreshCalls += 1;
+    },
+    resolveRelevantMemories: async () => [],
+    markSurfaced: () => {},
+    runExtractorIfNeeded: async () => {
+      state.extractorCalls += 1;
+    },
+  };
+  return { runtime, state };
+}
+
+function makeFileWriteApprovalProbeTool(): Tool {
+  return {
+    name: "FileWrite",
+    description: "fake file write that probes permission",
+    requiresApproval: true,
+    input_schema: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } },
+      required: ["path", "content"],
+    },
+    execute: () => "wrote",
+  };
+}
+
+describe("runAgentLoop - M16 memory integration", () => {
+  test("memoryRuntime.getInstructions 被合并进 system prompt", async () => {
+    const { client, calls } = makeFakeClient([{ textChunks: ["hi"], stopReason: "end_turn" }]);
+    const { runtime } = makeFakeMemoryRuntime({
+      instructions: "# auto memory\n\nINJECTED-MEMORY-MARKER",
+    });
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hello",
+        tools: [],
+        client,
+        memoryRuntime: runtime,
+      }),
+    );
+    expect(calls[0]?.system).toContain("INJECTED-MEMORY-MARKER");
+  });
+
+  test("refreshInstructions 每轮调一次", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [{ id: "tu1", name: "echo", input: { message: "hi" } }],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["done"], stopReason: "end_turn" },
+    ]);
+    const { runtime, state } = makeFakeMemoryRuntime({ instructions: "mem" });
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hello",
+        tools: [makeEchoTool()],
+        client,
+        memoryRuntime: runtime,
+      }),
+    );
+    // 主循环跑了 2 turn → refresh 2 次
+    expect(state.refreshCalls).toBe(2);
+  });
+
+  test("runExtractorIfNeeded 在 end_turn 后 fire-and-forget", async () => {
+    const { client } = makeFakeClient([{ textChunks: ["done"], stopReason: "end_turn" }]);
+    const { runtime, state } = makeFakeMemoryRuntime();
+    await collectEvents(
+      runAgentLoop({
+        config: baseConfig,
+        userPrompt: "hello",
+        tools: [],
+        client,
+        memoryRuntime: runtime,
+      }),
+    );
+    // 给 microtask queue 一次机会消化
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(state.extractorCalls).toBe(1);
+  });
+
+  test("FileWrite 到 memoryDir 内 → carve-out 自动放行（无需审批）", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [
+          {
+            id: "tu_mem",
+            name: "FileWrite",
+            input: { path: "/fake/mem/projects/foo/feedback.md", content: "x" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["saved"], stopReason: "end_turn" },
+    ]);
+    const { runtime } = makeFakeMemoryRuntime({ memoryDir: "/fake/mem/projects/foo/" });
+    const tmpHome = await mkdtemp(join(tmpdir(), "nova-mem-carveout-"));
+    try {
+      const events = await collectEvents(
+        runAgentLoop({
+          config: baseConfig,
+          userPrompt: "save memory",
+          tools: [makeFileWriteApprovalProbeTool()],
+          client,
+          memoryRuntime: runtime,
+          permissionMode: "default",
+          permissionStore: makeInMemoryStore(),
+          // 不传 permissionProvider：默认会把 ask 降级 deny；
+          // 若 carve-out 生效则不应触发 ask，工具应成功执行。
+        }),
+      );
+      const results = events.filter(
+        (e): e is Extract<AgentEvent, { type: "tool_result" }> => e.type === "tool_result",
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.isError).toBe(false);
+      expect(results[0]?.content).toBe("wrote");
+    } finally {
+      await rm(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test("FileWrite 到 memoryDir 外 → 仍需审批（carve-out 不影响他处）", async () => {
+    const { client } = makeFakeClient([
+      {
+        textChunks: [],
+        toolUses: [
+          {
+            id: "tu_other",
+            name: "FileWrite",
+            input: { path: "/work/src/foo.ts", content: "x" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { textChunks: ["ok"], stopReason: "end_turn" },
+    ]);
+    const { runtime } = makeFakeMemoryRuntime({ memoryDir: "/fake/mem/projects/foo/" });
+    const tmpHome = await mkdtemp(join(tmpdir(), "nova-mem-carveout-out-"));
+    try {
+      const events = await collectEvents(
+        runAgentLoop({
+          config: baseConfig,
+          userPrompt: "write non-memory",
+          tools: [makeFileWriteApprovalProbeTool()],
+          client,
+          memoryRuntime: runtime,
+          permissionMode: "default",
+          permissionStore: makeInMemoryStore(),
+          // 不传 permissionProvider → ask 降级为 deny
+        }),
+      );
+      const results = events.filter(
+        (e): e is Extract<AgentEvent, { type: "tool_result" }> => e.type === "tool_result",
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.isError).toBe(true);
+    } finally {
+      await rm(tmpHome, { recursive: true, force: true });
+    }
   });
 });

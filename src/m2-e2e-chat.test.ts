@@ -41,6 +41,10 @@ async function runChatChild(params: {
       NOVA_TRANSPORT: "mock",
       NOVA_MOCK_SCENARIO: "chat",
       NOVA_MOCK_LOG_FILE: params.mockLogFile,
+      // M16: disable auto memory for this M2 test so the per-turn relevance call
+      // and end-of-turn extractor don't add extra mock entries the assertions
+      // weren't designed for.
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -176,6 +180,7 @@ describe("m2-e2e-chat", () => {
         NOVA_TRANSPORT: "mock",
         NOVA_MOCK_SCENARIO: "chat",
         NOVA_MOCK_LOG_FILE: mockLogFile,
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       },
       stdin: "pipe",
       stdout: "pipe",

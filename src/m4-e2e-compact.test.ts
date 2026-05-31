@@ -44,6 +44,9 @@ async function runChatChild(params: {
       NOVA_TRANSPORT: "mock",
       NOVA_MOCK_SCENARIO: "chat",
       NOVA_MOCK_LOG_FILE: params.mockLogFile,
+      // M16: existing M4 compact e2e doesn't account for memory's per-turn relevance
+      // selector / end-of-turn extractor; disable to keep assertions stable.
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       ...(params.extraEnv ?? {}),
     },
     stdin: "pipe",

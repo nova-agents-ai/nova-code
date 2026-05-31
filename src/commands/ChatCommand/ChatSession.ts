@@ -29,6 +29,7 @@ import { createAnthropicClient } from "../../services/api/client.ts";
 import type { AutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { compactConversation } from "../../services/compact/compact.ts";
 import type { HooksConfig } from "../../services/hooks/types.ts";
+import type { MemoryRuntime } from "../../services/memory/index.ts";
 import type { PermissionProvider } from "../../services/permissions/PermissionProvider.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import type { PlanModeRuntime } from "../../services/plan/index.ts";
@@ -86,6 +87,13 @@ export interface ChatTurnContext {
   readonly hooks?: HooksConfig;
   // ── M15 Plan Mode 注入 ────────────────────────────────────────────────
   readonly planModeRuntime?: PlanModeRuntime;
+  // ── M16 Memory 注入 ───────────────────────────────────────────────────
+  readonly memoryRuntime?: MemoryRuntime;
+  /**
+   * 共享 client：runChatRepl 创建一次后透传，避免 runAgentLoop / memoryRuntime
+   * 各自重建（成本不大但状态不一致会让单测复杂）。
+   */
+  readonly client?: import("@anthropic-ai/sdk").default;
 }
 
 /**
@@ -176,6 +184,8 @@ export class ChatSession {
         : {}),
       ...(ctx.hooks !== undefined ? { hooks: ctx.hooks } : {}),
       ...(ctx.planModeRuntime !== undefined ? { planModeRuntime: ctx.planModeRuntime } : {}),
+      ...(ctx.memoryRuntime !== undefined ? { memoryRuntime: ctx.memoryRuntime } : {}),
+      ...(ctx.client !== undefined ? { client: ctx.client } : {}),
       sessionId: this._meta.sessionId,
     });
 

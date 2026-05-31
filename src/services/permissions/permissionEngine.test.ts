@@ -48,6 +48,7 @@ function evalInput(params: {
   input?: unknown;
   rules?: readonly PermissionRuleWithSource[];
   cwd?: string;
+  memoryDir?: string;
 }) {
   return evaluatePermission({
     mode: params.mode ?? "default",
@@ -56,6 +57,7 @@ function evalInput(params: {
     input: params.input ?? {},
     rules: params.rules ?? [],
     cwd: params.cwd ?? CWD,
+    ...(params.memoryDir !== undefined ? { memoryDir: params.memoryDir } : {}),
   });
 }
 
@@ -390,6 +392,117 @@ describe("组合场景", () => {
       input: { path: "/work/src/foo.ts" },
       cwd: "/work",
       rules: [mkEntry("session", "FileWrite", "allow", "src/**/*.ts")],
+    });
+    expect(result.decision).toBe("allow");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Step 3.5 (M16): auto memory carve-out
+// ────────────────────────────────────────────────────────────────────────────
+describe("Step 3.5: auto memory carve-out (M16)", () => {
+  const MEM_DIR = "/mem/projects/foo/";
+
+  test("FileWrite 落点在 memoryDir 内 → allow（即使无规则）", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "/mem/projects/foo/feedback.md" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toContain("auto memory directory carve-out");
+  });
+
+  test("FileEdit 落点在 memoryDir 内 → allow", () => {
+    const result = evalInput({
+      toolName: "FileEdit",
+      requiresApproval: true,
+      input: { path: "/mem/projects/foo/MEMORY.md" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("allow");
+  });
+
+  test("FileWrite 落点在 memoryDir 外 → 走后续规则（默认 ask）", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "/work/src/foo.ts" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("ask");
+  });
+
+  test("Bash 工具不受 carve-out 影响（即使路径匹配）", () => {
+    const result = evalInput({
+      toolName: "Bash",
+      input: { command: "echo hi >> /mem/projects/foo/x.md" },
+      memoryDir: MEM_DIR,
+    });
+    // Bash 不在 carve-out 范围，按默认（requiresApproval=false → allow）
+    expect(result.decision).toBe("allow");
+  });
+
+  test("memoryDir 未传 → 不启用 carve-out", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "/mem/projects/foo/feedback.md" },
+    });
+    expect(result.decision).toBe("ask");
+  });
+
+  test("plan mode 仍能拦 memoryDir 写入（carve-out 排在 plan 之后）", () => {
+    const result = evalInput({
+      mode: "plan",
+      toolName: "FileWrite",
+      input: { path: "/mem/projects/foo/feedback.md" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("plan mode");
+  });
+
+  test("DENY_PATTERNS（Bash 灾难命令）不被 carve-out 绕过", () => {
+    // carve-out 只对 FileWrite/FileEdit；这里验证 Bash 端 DENY_PATTERNS 仍生效
+    const result = evalInput({
+      toolName: "Bash",
+      input: { command: "rm -rf /" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("deny");
+    expect(result.denyPatternName).toBeDefined();
+  });
+
+  test("相对路径：基于 cwd 解析后判断", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "feedback.md" },
+      cwd: "/mem/projects/foo",
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("allow");
+  });
+
+  test("`..` 越狱：路径展开后已不在 memoryDir → 不放行", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "/mem/projects/foo/../../etc/passwd" },
+      memoryDir: MEM_DIR,
+    });
+    expect(result.decision).toBe("ask");
+  });
+
+  test("session deny FileWrite 不影响 memoryDir 写入（carve-out 在 deny 之前）", () => {
+    const result = evalInput({
+      toolName: "FileWrite",
+      requiresApproval: true,
+      input: { path: "/mem/projects/foo/x.md" },
+      memoryDir: MEM_DIR,
+      rules: [mkEntry("session", "FileWrite", "deny")],
     });
     expect(result.decision).toBe("allow");
   });

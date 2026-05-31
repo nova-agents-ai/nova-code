@@ -31,6 +31,10 @@ import {
   createAutoCompactTrackingState,
 } from "../../services/compact/autoCompact.ts";
 import { type CostTracker, formatChatCostSummary } from "../../services/cost/index.ts";
+import {
+  type MemoryRuntime,
+  renderRelevantMemoriesAsSystemReminder,
+} from "../../services/memory/index.ts";
 import type { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import {
   createInteractivePlanApprovalProvider,
@@ -101,6 +105,10 @@ export interface RunChatReplParams {
   readonly autoCompactTracking?: AutoCompactTrackingState;
   /** M5：会话级 cost tracker；不注入则不打印/不累计费用。 */
   readonly costTracker?: CostTracker;
+  /** M16：会话级 memory runtime；不注入则记忆系统全 no-op。 */
+  readonly memoryRuntime?: MemoryRuntime;
+  /** M16：与 memoryRuntime 共享的 Anthropic client；不注入时 runAgentLoop 自行创建。 */
+  readonly client?: import("@anthropic-ai/sdk").default;
 }
 
 /**
@@ -140,6 +148,8 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
     skills,
     pluginSlashCommands,
     costTracker,
+    memoryRuntime,
+    client,
   } = params;
   // M4: 自动 compact 默认开启；调用方可通过 autoCompactEnabled=false 关闭
   const autoCompactEnabled = params.autoCompactEnabled !== false;
@@ -368,11 +378,29 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
         for (const warning of resolvedPrompt.warnings) {
           io.stderr(`[attachment] ${warning}\n`);
         }
+        // M16: per-turn LLM relevance recall。memoryRuntime 未注入 / 关闭时返回空。
+        const relevantMemories = memoryRuntime
+          ? await memoryRuntime.resolveRelevantMemories(turnInput, abortController.signal)
+          : [];
+        if (memoryRuntime !== undefined && relevantMemories.length > 0) {
+          memoryRuntime.markSurfaced(relevantMemories);
+          io.stderr(`[memory] surfaced ${relevantMemories.length} relevant memory file(s)\n`);
+        }
+        const memoryReminder = renderRelevantMemoriesAsSystemReminder(relevantMemories);
+        const turnUserContent =
+          memoryReminder === ""
+            ? resolvedPrompt.content
+            : [
+                { type: "text" as const, text: memoryReminder },
+                ...(typeof resolvedPrompt.content === "string"
+                  ? [{ type: "text" as const, text: resolvedPrompt.content }]
+                  : resolvedPrompt.content),
+              ];
         const gen = session.sendTurn(turnInput, {
           config,
           tools: readCurrentTools(),
           signal: abortController.signal,
-          userMessageContent: resolvedPrompt.content,
+          userMessageContent: turnUserContent,
           ...(llmLogSink !== undefined ? { llmLogSink } : {}),
           permissionMode: modeState.current,
           ...(permissionStore !== undefined ? { permissionStore } : {}),
@@ -387,6 +415,8 @@ export async function runChatRepl(params: RunChatReplParams): Promise<number> {
           ...(projectInstructionsRuntime !== undefined ? { projectInstructionsRuntime } : {}),
           hooks: config.hooks,
           planModeRuntime,
+          ...(memoryRuntime !== undefined ? { memoryRuntime } : {}),
+          ...(client !== undefined ? { client } : {}),
         });
         for await (const event of gen) {
           debugSink.write(event);

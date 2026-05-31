@@ -119,3 +119,4 @@ claude-code/
 .qoder
 *.zip
 .gstack/
+.claude/settings.local.json

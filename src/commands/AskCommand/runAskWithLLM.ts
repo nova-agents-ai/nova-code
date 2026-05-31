@@ -17,11 +17,17 @@ import { AbortError, ConfigError, MaxTurnsExceededError } from "../../errors/ind
 import { runAgentLoop } from "../../QueryEngine.ts";
 import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
+import { createAnthropicClient } from "../../services/api/client.ts";
 import { LLMApiError } from "../../services/api/errors.ts";
 import { resolvePromptAttachments } from "../../services/attachments/index.ts";
 import { createAutoCompactTrackingState } from "../../services/compact/autoCompact.ts";
 import { HookExecutionOutcome } from "../../services/hooks/types.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
+import {
+  createMemoryExtractorFactory,
+  createMemoryRuntime,
+  renderRelevantMemoriesAsSystemReminder,
+} from "../../services/memory/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import { createPlanModeRuntime } from "../../services/plan/index.ts";
 import {
@@ -156,6 +162,42 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       initialPermissionMode,
     });
     const autoCompactTracking = createAutoCompactTrackingState();
+
+    // M16: 创建共享 client + memoryRuntime（含 extractor 闭包），并在 LLM 调用前
+    //   先用 relevance selector 挑出 ≤5 条相关 memory 注入 user content。
+    //   runtime 未启用（env 关闭 / config 关闭）时 getInstructions / resolve /
+    //   runExtractorIfNeeded 都是 no-op，下面的代码无需额外判空。
+    const sharedClient = createAnthropicClient(effectiveConfig);
+    const memoryRuntime = await createMemoryRuntime({
+      client: sharedClient,
+      model: effectiveConfig.model,
+      autoMemoryEnabled: effectiveConfig.autoMemoryEnabled,
+      cwd: process.cwd(),
+      extractorFactoryBuilder: (memoryDir) =>
+        createMemoryExtractorFactory({
+          runAgentLoop,
+          client: sharedClient,
+          config: effectiveConfig,
+          tools,
+          memoryDir,
+          signal: abortController.signal,
+        }),
+    });
+    const relevantMemories = await memoryRuntime.resolveRelevantMemories(
+      userPrompt,
+      abortController.signal,
+    );
+    memoryRuntime.markSurfaced(relevantMemories);
+    const memoryReminder = renderRelevantMemoriesAsSystemReminder(relevantMemories);
+    const finalUserContent =
+      memoryReminder === ""
+        ? resolvedPrompt.content
+        : [
+            { type: "text" as const, text: memoryReminder },
+            ...(typeof resolvedPrompt.content === "string"
+              ? [{ type: "text" as const, text: resolvedPrompt.content }]
+              : resolvedPrompt.content),
+          ];
     logEvent("tengu_started", {
       command: "ask",
       model: config.model,
@@ -184,9 +226,10 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
     const generator = runAgentLoop({
       config: effectiveConfig,
       userPrompt,
-      userMessageContent: resolvedPrompt.content,
+      userMessageContent: finalUserContent,
       tools,
       signal: abortController.signal,
+      client: sharedClient,
       llmLogSink: options.debug ? llmLogSink : undefined,
       // ask 默认 acceptEdits：FileWrite/FileEdit 直接放行（便于常见 "生成代码"
       // 场景），Bash 仍走规则判定→ask→headless deny
@@ -203,6 +246,7 @@ export async function runAskWithLLM(question: string, options: RunAskOptions): P
       hooks: effectiveHooks,
       sessionId: "ask",
       planModeRuntime,
+      memoryRuntime,
     });
 
     for await (const event of generator) {

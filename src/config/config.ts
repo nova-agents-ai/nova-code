@@ -78,6 +78,11 @@ export interface PersistedConfig {
   readonly hooks?: HooksConfig;
   /** M13: local plugin trust/enable state, keyed by plugin manifest name. */
   readonly plugins?: PluginStatesConfig;
+  /**
+   * M16: 是否启用 auto memory（默认 true）。设为 false 等同于 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1。
+   * 详见 docs/manual/M16-usage-guide.md。
+   */
+  readonly autoMemoryEnabled?: boolean;
 }
 
 export interface PluginStateConfig {
@@ -111,6 +116,8 @@ export interface ResolvedConfig {
   readonly webProxyDomains: readonly string[];
   readonly mcpServers: McpServersConfig;
   readonly hooks: HooksConfig;
+  /** M16: auto memory 启用状态。默认 true。 */
+  readonly autoMemoryEnabled: boolean;
 }
 
 /**
@@ -232,6 +239,7 @@ export function resolveConfig(
         : (persisted.webProxyDomains ?? []),
     mcpServers: persisted.mcpServers ?? {},
     hooks: persisted.hooks ?? {},
+    autoMemoryEnabled: persisted.autoMemoryEnabled ?? true,
   };
 }
 
@@ -344,6 +352,15 @@ function validatePersistedConfig(value: unknown, path: string): PersistedConfig 
 
   if (obj.plugins !== undefined) {
     result.plugins = validatePluginStatesConfig(obj.plugins, path);
+  }
+
+  if (obj.autoMemoryEnabled !== undefined) {
+    if (typeof obj.autoMemoryEnabled !== "boolean") {
+      throw new ConfigError(
+        `Config at ${path}: 'autoMemoryEnabled' must be a boolean, got ${typeName(obj.autoMemoryEnabled)}.`,
+      );
+    }
+    result.autoMemoryEnabled = obj.autoMemoryEnabled;
   }
 
   return result;

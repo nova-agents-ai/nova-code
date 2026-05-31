@@ -14,10 +14,13 @@
 
 import { loadConfig } from "../../config/config.ts";
 import { ConfigError } from "../../errors/index.ts";
+import { runAgentLoop } from "../../QueryEngine.ts";
 import { attachAnalyticsSink, logEvent } from "../../services/analytics/index.ts";
 import { createDefaultAnalyticsSink } from "../../services/analytics/sink.ts";
+import { createAnthropicClient } from "../../services/api/client.ts";
 import { appendCostLedgerEntry, CostTracker } from "../../services/cost/index.ts";
 import { createMcpToolRegistry, type McpToolRegistry } from "../../services/mcp/index.ts";
+import { createMemoryExtractorFactory, createMemoryRuntime } from "../../services/memory/index.ts";
 import { PermissionStore } from "../../services/permissions/permissionStore.ts";
 import {
   loadPluginCatalog,
@@ -165,6 +168,26 @@ export const chatCommand: CommandDefinition = {
       const skillTool = createSkillTool(skillCatalog.skills);
       const baseTools = [...builtinTools, ...(skillTool !== undefined ? [skillTool] : [])];
 
+      // M16: 共享 client + memory runtime；extractor 复用 baseTools + MCP 工具，
+      //   工具白名单在 createMemoryExtractorFactory 内部按 EXTRACTOR_TOOL_WHITELIST 过滤。
+      const sharedClient = createAnthropicClient(effectiveConfig);
+      const memoryRuntime = await createMemoryRuntime({
+        client: sharedClient,
+        model: effectiveConfig.model,
+        autoMemoryEnabled: effectiveConfig.autoMemoryEnabled,
+        cwd: process.cwd(),
+        extractorFactoryBuilder: (memoryDir) =>
+          createMemoryExtractorFactory({
+            runAgentLoop,
+            client: sharedClient,
+            config: effectiveConfig,
+            tools: [...baseTools, ...(mcpRegistry?.tools ?? [])],
+            memoryDir,
+            // chat 会话整体生命周期；不挂任何 signal（extractor 自带 maxTurns 兜底）
+            signal: new AbortController().signal,
+          }),
+      });
+
       logEvent("tengu_started", {
         command: "chat",
         model: config.model,
@@ -192,6 +215,8 @@ export const chatCommand: CommandDefinition = {
         skills: skillCatalog.skills,
         pluginSlashCommands: pluginCatalog.slashCommands,
         costTracker,
+        memoryRuntime,
+        client: sharedClient,
       });
       await appendChatCostLedgerBestEffort(costTracker, session.meta.sessionId, exitCode);
       logEvent("tengu_exit", { command: "chat", exitCode });

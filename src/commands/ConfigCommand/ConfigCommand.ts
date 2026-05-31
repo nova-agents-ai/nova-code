@@ -23,6 +23,7 @@ const CONFIG_KEYS = [
   "maxTurns",
   "webProxy",
   "webProxyDomains",
+  "autoMemoryEnabled",
 ] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 
@@ -30,8 +31,8 @@ export const configCommand: CommandDefinition = {
   name: "config",
   description: "读取或更新 ~/.nova-code/config.json",
   usage:
-    "nova-code config get [apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains]\n" +
-    "nova-code config set <apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains> <value>",
+    "nova-code config get [apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains|autoMemoryEnabled]\n" +
+    "nova-code config set <apiKey|baseURL|model|maxTokens|maxTurns|webProxy|webProxyDomains|autoMemoryEnabled> <value>",
   run: (args) => runConfigCommand(args),
 };
 
@@ -144,6 +145,8 @@ function withConfigValue(config: PersistedConfig, key: ConfigKey, value: string)
       return { ...config, webProxy: String(parsed) };
     case "webProxyDomains":
       return { ...config, webProxyDomains: parseCommaSeparatedList(String(parsed)) };
+    case "autoMemoryEnabled":
+      return { ...config, autoMemoryEnabled: parsed === true };
   }
 }
 
@@ -151,13 +154,19 @@ function parseConfigKey(value: string): ConfigKey | undefined {
   return CONFIG_KEYS.find((key) => key === value);
 }
 
-function parseConfigValue(key: ConfigKey, value: string): string | number {
+function parseConfigValue(key: ConfigKey, value: string): string | number | boolean {
   if (key === "maxTokens" || key === "maxTurns") {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
       throw new ConfigError(`${key} must be a positive integer.`);
     }
     return parsed;
+  }
+  if (key === "autoMemoryEnabled") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1" || v === "yes") return true;
+    if (v === "false" || v === "0" || v === "no") return false;
+    throw new ConfigError(`${key} must be a boolean (true/false), got '${value}'.`);
   }
   if (key === "webProxy") {
     validateProxyUrl(value);

@@ -451,11 +451,14 @@ function extractLastToolResultText(messages: MockRequestBody["messages"]): strin
 }
 
 /**
- * M4/M12: 把 system 字段抽前缀放到 mock log，供 e2e 断言项目指令是否注入。
+ * M4/M12/M16: 把 system 字段抽前缀放到 mock log，供 e2e 断言项目指令是否注入。
+ *
+ * MAX 在 M16 后调到 16000：memory section（# auto memory + 4 type + ...）单独
+ * 就 ~5KB，再加上 CLAUDE.md / skills / rules 拼接，4000 字节截窗太短会让
+ * e2e 看不到 MEMORY.md 段。16000 仍远小于真实 system prompt 的 64KB 上限。
  */
 function extractSystemSnippet(system: unknown): string | undefined {
-  // 给上限一点余量；CLAUDE.md / rules / skills 合并后内容靠后，需要够长才捕得到。
-  const MAX = 4000;
+  const MAX = 16000;
   if (typeof system === "string") return system.slice(0, MAX);
   if (Array.isArray(system)) {
     const first = system[0];

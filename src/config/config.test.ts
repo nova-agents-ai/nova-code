@@ -405,3 +405,44 @@ describe("config - loadConfig (集成)", () => {
     }
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// M16: autoMemoryEnabled 字段
+// ────────────────────────────────────────────────────────────────────────────
+describe("autoMemoryEnabled (M16)", () => {
+  test("默认 true（未设置时）", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      const config = await loadConfig({ homeDir, env: { NOVA_API_KEY: "sk" } });
+      expect(config.autoMemoryEnabled).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("文件设 false 后 resolve 也是 false", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      await savePersistedConfig({ apiKey: "sk", autoMemoryEnabled: false }, { homeDir });
+      const config = await loadConfig({ homeDir });
+      expect(config.autoMemoryEnabled).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("非 boolean 抛 ConfigError", async () => {
+    const { homeDir, cleanup } = await makeTempHome();
+    try {
+      // 直接写入非法 JSON
+      const path = `${homeDir}/.nova-code/config.json`;
+      const { mkdir, writeFile } = await import("node:fs/promises");
+      const { dirname } = await import("node:path");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, '{"apiKey":"sk","autoMemoryEnabled":"yes"}');
+      await expect(loadConfig({ homeDir })).rejects.toThrow(/autoMemoryEnabled/);
+    } finally {
+      await cleanup();
+    }
+  });
+});

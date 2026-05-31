@@ -170,6 +170,7 @@ const baseConfig: ResolvedConfig = {
   webProxyDomains: [],
   mcpServers: {},
   hooks: {},
+  autoMemoryEnabled: false,
 };
 
 let workDir: string;

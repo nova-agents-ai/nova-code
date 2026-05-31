@@ -1,8 +1,8 @@
-# nova-code 路线图 v2.16
+# nova-code 路线图 v2.21
 
 > 渐进对齐 → 改进 → 超越
 >
-> 最后更新：2026-05-17
+> 最后更新：2026-05-25
 
 ---
 
@@ -410,7 +410,45 @@ WebFetchTool / WebSearchTool / 网页正文抽取。
 - M11 `Agent` 新增 `subagent_type:"plan"`，与 `explore` 一样只暴露只读工具，供模型并行产出计划但不能改文件。
 - 新增 M15 设计文档 / 使用手册 / 架构快照：[`docs/design/M15-plan-mode.md`](./design/M15-plan-mode.md)、[`docs/manual/M15-usage-guide.md`](./manual/M15-usage-guide.md)、[`docs/architecture/M15-architecture.md`](./architecture/M15-architecture.md)。
 
-### M16 — 多 Provider 抽象
+### M16 — 持久化记忆系统（Auto Memory）
+
+把 claude-code 的 `src/memdir/` 完整复刻为 nova-code 的跨会话记忆能力：让模型在多次 `chat` / `ask` 之间记住用户偏好、纠正过的错误、项目背景和关键决策，不需要每次会话从零开始。
+
+**参照**：`claude-code/src/memdir/` 全部 8 个文件、`claude-code/src/services/extractMemories/`、`claude-code/src/utils/attachments.ts` 中的 `relevant_memories` 流程。
+
+**新增**：
+
+- `~/.nova-code/memory/projects/<sanitize(git-root | cwd)>/` 目录：四类记忆（`user` / `feedback` / `project` / `reference`）按 frontmatter 分类的 `.md` 文件 + `MEMORY.md` 索引。
+- `src/services/memory/` 模块：`paths` / `scan` / `frontmatter` / `entrypoint` / `prompt` / `relevance` / `extractor` / `memoryRuntime` 等子模块。
+- `MEMORY.md` 整文件常驻 system prompt（200 行 / 25KB 双门截断）。
+- 每轮 user input 异步 sideQuery（LLM 二级调度）从全量 frontmatter manifest 中挑出最多 5 条相关 topic 文件，作为 `<system-reminder>` 注入 user content。
+- 主对话主动写入路径：模型用 FileWrite/FileEdit 写到 `memoryDir` 内的路径直接放行（权限引擎 carve-out），不弹审批。
+- 端 turn 后台 extractor：复用 M11 sub-agent 模式派生受限子 agent，工具白名单 Read/Grep/Glob/LS + Edit/Write 限定 memoryDir + 只读 Bash；主对话已写则跳过。
+- `autoMemoryEnabled` 设置 + `CLAUDE_CODE_DISABLE_AUTO_MEMORY` 环境变量；非 git 目录回退到 cwd；同 repo 不同 worktree 共享一份记忆。
+
+**设计要点**：
+
+- 单一事实源：四类记忆的 prompt 文本常量集中在 `services/memory/promptText.ts`，与 claude-code `memoryTypes.ts` 同名映射，方便后续对齐 upstream。
+- 复用 M11：extractor 不引入新的 forkedAgent 基础设施，复用 `runSubAgent` 派生模式，父消息文本化注入。
+- 复用 M3：memoryDir 写权 carve-out 改 `permissionEngine` 的第 4 步前置插入一条独立规则；`isAutoMemPath()` 用 `normalize()` 防 `..` 越狱。
+- 复用 M12：`MemoryRuntime` 接口形状参考 `ProjectInstructionsRuntime`（`getInstructions()` 返回 system prompt 片段，每轮重建）。
+- 复用 M14：相关性召回结果以 `<system-reminder>` 包装的 user content 注入，与 attachment 注入风格一致。
+
+**与 claude-code 的差异声明**：
+
+- 不做 team memory（subdirectory 共享 + 同步），后续 milestone 可补
+- 不做 KAIROS daily log（assistant 长会话场景，CLI 用不上）
+- 不做 perfect-fork runForkedAgent + cacheSafeParams（M16 用 M11 sub-agent 模式）
+- 不做向量检索 / embeddings（claude-code 也不用，纯 LLM selector）
+- 不做记忆迁移工具（从 `~/.claude/memory` 导入到 `~/.nova-code/memory`）
+
+**DoD**：
+
+- 用户在 `chat` 中告诉模型一个偏好 → 模型主动调 FileWrite 落盘 → 退出 chat → 重开 chat → system prompt 中可见 `MEMORY.md` 内容；模型在新会话里能基于该记忆回答
+- per-turn relevance 选中的 topic 文件作为 `<system-reminder>` 注入 user message
+- extractor 兜底：主对话未写时端 turn 派生子 agent 提取
+
+### M17 — 多 Provider 抽象
 
 OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
@@ -418,7 +456,7 @@ OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
 **机会**：claude-code 偏向 Anthropic 生态，nova 做真正中立的多 provider 是天然差异化
 
-### M17 — TUI（React + Ink）
+### M18 — TUI（React + Ink）
 
 到这一期再做 TUI 而不是早期做，原因：
 
@@ -429,13 +467,13 @@ OpenAI / Bedrock / Vertex / 国产模型（DashScope / 智谱 / Moonshot）。
 
 **减重策略**：claude-code 用了 389 个 React 组件，nova 目标 < 80 个
 
-### M18 — Resume / Save / Share 会话
+### M19 — Resume / Save / Share 会话
 
 `commands/resume`、会话持久化到 `~/.nova-code/sessions/`、生成可分享链接（本地导出 markdown）。
 
 **参照**：`claude-code/src/history.ts` + `commands/{resume,share}/`
 
-### M18.5 — 重构窗口 #3 + Phase 2 收官
+### M19.5 — 重构窗口 #3 + Phase 2 收官
 
 - 全模块审计：单文件 < 600 行硬约束、循环依赖清零
 - 性能回归：与 v0.5.0 baseline 对比，启动时间不退化超 20%
@@ -519,7 +557,7 @@ Phase 3 不预设具体顺序。
                    ═══ v0.5.0 ═══
                          │
                          ▼
-                   Phase 2 (M7-M18)
+                   Phase 2 (M7-M19)
                          │
               ┌──────────┼──────────┐
               ▼          ▼          ▼
@@ -538,12 +576,18 @@ Phase 3 不预设具体顺序。
                          ▼
                  M15 Plan Mode ✅
                          │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-        M16 Providers  M17 TUI   M18 Resume/Share
+                         ▼
+                M16 Auto Memory
                          │
                          ▼
-                  M18.5 重构 #3
+                M17 Providers
+                         │
+              ┌──────────┴──────────┐
+              ▼                     ▼
+           M18 TUI            M19 Resume/Share
+                         │
+                         ▼
+                  M19.5 重构 #3
                          │
                          ▼
                    ═══ v1.0.0 ═══
@@ -558,11 +602,12 @@ Phase 3 不预设具体顺序。
   - M2 + M4 → M11（AgentTool 需要稳定的多轮 + compact 基础）
   - M12 → M14（@-mention / prompt 附件命中文件路径时要激活 path-scoped rules）
   - M3 → M15（Plan Mode 需要权限系统在批准前拦截写权工具）
-  - M2 → M18（resume / share 服务于 chat 会话）
+  - M3 + M11 → M16（memory carve-out 复用权限引擎；后台 extractor 复用 sub-agent 模式）
+  - M2 → M19（resume / share 服务于 chat 会话）
 - **软建议**：
   - M3 / M2 / M5 / M6 在 M1.5 之后可任意顺序、可并行
-  - Phase 2 内 M7 / M8 / M9 / M10 / M11 已完成；M12-M15 是进入 provider/TUI 前的上下文与策略补齐段
-  - M16 多 provider 与 M17 TUI 大体独立，但 M17 应复用 M14 attachment 数据模型与 M15 plan state
+  - Phase 2 内 M7 / M8 / M9 / M10 / M11 已完成；M12-M15 是进入 memory/provider/TUI 前的上下文与策略补齐段
+  - M17 多 provider 与 M18 TUI 大体独立，但 M18 应复用 M14 attachment 数据模型与 M15 plan state
 
 ---
 
@@ -651,6 +696,7 @@ Phase 3 不预设具体顺序。
 
 ## 九、版本历史
 
+- **v2.21**（2026-05-25）：M16 持久化记忆系统（Auto Memory）落地，并把原 M16 多 Provider 抽象顺延到 M17，原 M17 TUI / M18 Resume / M18.5 重构 #3 顺延为 M18 / M19 / M19.5（与 v2.16 重排 M12-M15 的做法一致）。新增 `src/services/memory/` 模块（paths/scan/frontmatter/prompt/relevance/extractor/memoryRuntime 等）；记忆目录用 git canonical root 优先 + cwd 回退，跨 worktree 共享；MEMORY.md 整文件常驻 system prompt（200 行 / 25KB 双门截断），四类记忆（user/feedback/project/reference）frontmatter + topic file；主对话用 FileWrite/FileEdit 写到 memoryDir 内时权限引擎 carve-out；每轮 user input 异步 sideQuery 挑出最多 5 条相关 topic 作为 `<system-reminder>` 注入；端 turn 后台 extractor 复用 M11 sub-agent 模式派生受限子 agent；`autoMemoryEnabled` 设置 + `CLAUDE_CODE_DISABLE_AUTO_MEMORY` env；同步更新依赖图与版本历史；新增 M16 设计文档 / 使用手册 / 架构快照。
 - **v2.20**（2026-05-24）：M15 Plan Mode 一等运行模式落地。新增 `src/services/plan` 状态机、`EnterPlanMode` / `ExitPlanMode` 工具与 `/plan [prompt]` slash command；QueryEngine 每轮注入 Plan Mode / approved plan system instructions，并在权限判定前动态读取有效模式；`permissionEngine` 在 plan 模式下于 bypass / allow 规则之前拦截 `Bash` / `FileWrite` / `FileEdit`；chat 中 `ExitPlanMode({ plan })` 展示计划并读取 y/n 审批，获批后恢复进入前权限模式；`Agent` 新增只读 `subagent_type:"plan"`；新增 M15 设计文档 / 使用手册 / 架构快照。
 - **v2.19**（2026-05-19）：M14 Prompt 附件与 @-mention 上下文注入落地。新增 `src/services/attachments`，ask/chat 共享解析 `@file` / `@dir` / `@glob` / `@MCP__server__resource`；文件、目录摘要、glob、图片与 MCP resource 作为结构化 user content 注入模型；`ProjectInstructionsRuntime.activateForPath()` 让附件命中文件路径时首轮激活 M12 path-scoped rules；MCP stdio / HTTP client 与 registry 扩展 `resources/read`；`QueryEngine` 支持 `userMessageContent` 与 `ImageBlock`；新增 M14 设计文档 / 使用手册 / 架构快照。
 - **v2.18**（2026-05-18）：M13 插件系统落地。新增本地插件发现与 `plugin.json` manifest 校验，支持 `.nova-code/plugins/` 与 `~/.nova-code/plugins/`；新增 `nova-code plugin list|enable|disable|reload|validate` 与 `PersistedConfig.plugins` 信任/启用状态；插件可贡献 skills、`/plugin:command` custom slash commands、hooks、MCP servers 与 path-scoped rules；ask/chat 启动时把插件贡献项合并进既有 M8/M9/M10/M12 子系统；新增 M13 设计文档 / 使用手册 / 架构快照。

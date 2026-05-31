@@ -54,6 +54,7 @@ import {
   type HookExecutionRecord,
   type HooksConfig,
 } from "./services/hooks/types.ts";
+import type { MemoryRuntime } from "./services/memory/index.ts";
 import { BASH_TOOL_NAME } from "./services/permissions/bashRuleMatcher.ts";
 import { extractBashCommand } from "./services/permissions/dangerousPatterns.ts";
 import { extractFilePath, isFileWriteToolName } from "./services/permissions/fileRuleMatcher.ts";
@@ -202,6 +203,22 @@ export interface AgentLoopParams {
   // ── M15 Plan Mode 注入 ────────────────────────────────────────────────
   /** chat/ask 会话级 Plan Mode 状态机；缺省表示不启用一等 Plan Mode。 */
   readonly planModeRuntime?: PlanModeRuntime;
+
+  // ── M16 Auto Memory 注入 ──────────────────────────────────────────────
+  /**
+   * 会话级 MemoryRuntime；缺省表示不启用记忆系统。
+   *
+   * 启用时：
+   *   1. 每轮 turn 顶端 await refreshInstructions（让模型上一轮写过的 MEMORY.md 立即可见）
+   *   2. buildSystemPrompt 合并 getInstructions() 进 system prompt
+   *   3. evaluatePermission 传入 memoryDir，让 FileWrite/FileEdit 写到 memoryDir 内的
+   *      路径走 carve-out 跳过审批
+   *   4. 主对话 loop 结束（end_turn）后 fire-and-forget 触发 runExtractorIfNeeded
+   *
+   * 不向下游 sub-agent 透传：子 agent 不应自己写记忆，且 extractor 自身是
+   * runMemoryExtractor 在 QueryEngine 外部触发的，sub-agent 路径不需要。
+   */
+  readonly memoryRuntime?: MemoryRuntime;
 }
 
 /** 默认 system prompt：让模型知道自己在 nova-code 这个 CLI 里。 */
@@ -278,8 +295,17 @@ export async function* runAgentLoop(
       throw new AbortError();
     }
 
+    // M16：模型可能在上一轮 turn 写过 MEMORY.md，先 refresh 让本轮 system
+    // prompt 立即看到最新索引。runtime 不启用时 refreshInstructions 是 no-op。
+    await params.memoryRuntime?.refreshInstructions();
+
     // M12：path-scoped rules 可能在上一轮工具执行后被激活，所以 system prompt
     // 必须每轮重建，而不能在 loop 启动时固定。
+    //
+    // 顺序刻意把 memoryRuntime.getInstructions() 排在最末：它内容最大
+    // （~5KB 文案 + MEMORY.md 内容），放在末尾能避免把更早的 skill listing /
+    // CLAUDE.md 推出 prompt cache prefix 的有效观测窗口（mockClient 抽前
+    // 4KB 做 e2e 断言；放尾不会破坏既有断言）。
     const systemPrompt = buildSystemPrompt({
       ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       toolNames,
@@ -287,6 +313,7 @@ export async function* runAgentLoop(
         params.planModeRuntime?.getSystemInstructions(),
         params.projectInstructionsRuntime?.getInstructions(),
         params.projectInstructions,
+        params.memoryRuntime?.getInstructions(),
       ),
     });
 
@@ -343,6 +370,9 @@ export async function* runAgentLoop(
 
     // 模型说完就结束，loop 终止
     if (stopReason !== AgentStopReasonEnum.TOOL_USE) {
+      // M16：fire-and-forget 触发 extractor；不传 memoryRuntime / runtime 已禁用时
+      // 自身就是 no-op。await void 故意吃掉 Promise，不阻塞 generator 返回。
+      void params.memoryRuntime?.runExtractorIfNeeded(messages);
       yield {
         type: "done",
         turns: turn,
@@ -356,6 +386,7 @@ export async function* runAgentLoop(
     if (toolUses.length === 0) {
       // SDK 报告 tool_use 但我们没找到任何 tool_use 块——理论不可能，
       // 但作为防御性编程：当作 end_turn 处理避免死循环
+      void params.memoryRuntime?.runExtractorIfNeeded(messages);
       yield {
         type: "done",
         turns: turn,
@@ -381,6 +412,7 @@ export async function* runAgentLoop(
       projectInstructionsRuntime: params.projectInstructionsRuntime,
       projectInstructions: params.projectInstructions,
       planModeRuntime: params.planModeRuntime,
+      memoryDir: params.memoryRuntime?.memoryDir,
     });
 
     // 把所有 tool_result 打包成单条 user message，发回模型
@@ -594,6 +626,8 @@ interface ExecuteToolsParams {
   readonly projectInstructionsRuntime?: ProjectInstructionsRuntime;
   readonly projectInstructions?: string;
   readonly planModeRuntime?: PlanModeRuntime;
+  /** M16: auto memory 目录，传入后启用 FileWrite/FileEdit carve-out。 */
+  readonly memoryDir?: string;
 }
 
 /** Phase A 产出的决策记录；Phase B 按 decision === "allow" 才调度执行。 */
@@ -625,6 +659,7 @@ async function* executeToolsAndYieldEvents(
     projectInstructionsRuntime,
     projectInstructions,
     planModeRuntime,
+    memoryDir,
   } = params;
   const resolvedCwd = cwd ?? process.cwd();
   const subAgentRuntime = createSubAgentRuntime({
@@ -703,6 +738,7 @@ async function* executeToolsAndYieldEvents(
       input: effectiveUse.input,
       rules: permissionStore?.getMergedRules() ?? [],
       cwd: resolvedCwd,
+      ...(memoryDir !== undefined && memoryDir !== "" ? { memoryDir } : {}),
     });
 
     if (evalResult.decision === "allow") {

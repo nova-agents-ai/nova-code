@@ -45,6 +45,7 @@
  *   让用户可以为只读工具也加强制审批
  */
 
+import { resolve } from "node:path";
 import type {
   PermissionDecision,
   PermissionMode,
@@ -53,6 +54,7 @@ import type {
   PermissionRuleWithSource,
 } from "../../types/permissions.ts";
 import { logEvent } from "../analytics/index.ts";
+import { isAutoMemPath } from "../memory/paths.ts";
 import { BASH_TOOL_NAME, matchBashRule } from "./bashRuleMatcher.ts";
 import { checkDenyPatterns, extractBashCommand } from "./dangerousPatterns.ts";
 import { extractFilePath, isFileWriteToolName, matchFileRule } from "./fileRuleMatcher.ts";
@@ -82,6 +84,17 @@ export interface PermissionEvaluationInput {
   readonly rules: readonly PermissionRuleWithSource[];
   /** 用于 file glob 相对化；通常是 process.cwd()。 */
   readonly cwd: string;
+  /**
+   * M16：auto memory 目录绝对路径（含尾部 sep）。
+   *
+   * 不为空时启用 carve-out：FileWrite/FileEdit 落点在 memoryDir 内 → 直接 allow，
+   * 跳过 deny 规则、acceptEdits、requiresApproval。否则模型每次写一条 memory 都要
+   * 被询问，体验灾难。
+   *
+   * 安全：carve-out 不能绕过 DENY_PATTERNS / plan mode / bypass 关掉前 3 步；位置
+   * 在 bypass 之后、deny 之前。详见 docs/design/M16-memory.md §7。
+   */
+  readonly memoryDir?: string;
 }
 
 /**
@@ -148,6 +161,24 @@ function evaluatePermissionImpl(input: PermissionEvaluationInput): PermissionEva
   // ── Step 3: bypassPermissions
   if (mode === "bypassPermissions") {
     return { decision: "allow", reason: "bypassPermissions mode" };
+  }
+
+  // ── Step 3.5 (M16): auto memory carve-out
+  //   FileWrite / FileEdit 落点在 memoryDir 内 → 直接 allow。
+  //   位置在 bypass 之后、deny 之前：用户全局 deny FileWrite 不影响记忆写入；
+  //   plan mode / DENY_PATTERNS 仍能在更早的步骤拦截（写权工具在 plan mode 下
+  //   即使是写 memory 也会被拦，与"先审批 plan 再执行"语义一致）。
+  if (input.memoryDir !== undefined && input.memoryDir !== "" && isFileWriteToolName(toolName)) {
+    const filePath = extractFilePath(toolInput);
+    if (filePath !== undefined) {
+      const abs =
+        filePath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(filePath)
+          ? filePath
+          : resolve(cwd, filePath);
+      if (isAutoMemPath(abs, input.memoryDir)) {
+        return { decision: "allow", reason: "auto memory directory carve-out" };
+      }
+    }
   }
 
   // ── Step 4: deny 规则（三层不分优先级）
